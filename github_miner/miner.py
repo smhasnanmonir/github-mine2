@@ -463,7 +463,7 @@ class AdvancedGitHubMiner:
             logging.error(f"Error collecting extended repo data for {repo_owner}/{repo_name}: {e}")
             return {}
 
-    def parallel_data_collection(self, usernames: List[str], max_workers: int = 5, save_immediately: bool = False, filename: str = None) -> List[Dict]:
+    def parallel_data_collection(self, usernames: List[str], max_workers: int = 5, save_immediately: bool = False, filename: str = None, fetch_all_commits: bool = False) -> List[Dict]:
 
         if save_immediately and not filename:
             raise ValueError("filename is required when save_immediately=True")
@@ -472,9 +472,10 @@ class AdvancedGitHubMiner:
             """Collect comprehensive data for a single user."""
             try:
                 if self.progress_callback:
-                    self.progress_callback(f"Starting data collection for {username}")
+                    commit_mode = "all commits" if fetch_all_commits else "recent commits"
+                    self.progress_callback(f"Starting data collection ({commit_mode}) for {username}")
                 
-                user_data = self.collect_single_user(username)
+                user_data = self.collect_single_user(username, fetch_all_commits=fetch_all_commits)
                 
                 # Save immediately after collection if requested
                 if save_immediately and user_data:
@@ -526,15 +527,16 @@ class AdvancedGitHubMiner:
         
         return results
 
-    def collect_single_user(self, username: str) -> Dict:
+    def collect_single_user(self, username: str, fetch_all_commits: bool = False) -> Dict:
 
         try:
             if self.stop_event and self.stop_event.is_set():
                 return None
             
+            logging.info(f"Starting data collection for user: {username}")
             user = self.github.get_user(username)
             
-            # Basic user data
+            # Basic user data - always collect this
             user_data = {
                 'username': username,
                 'followers': user.followers,
@@ -544,50 +546,104 @@ class AdvancedGitHubMiner:
                 'updated_at': user.updated_at,
             }
             
-            # Extended user data
-            if self.progress_callback:
-                self.progress_callback(f"Collecting extended data for {username}")
-            user_data['extended_user_data'] = self.collect_extended_user_data(username)
+            logging.info(f"User {username}: {user.public_repos} public repos, {user.followers} followers")
             
-            # Development patterns
-            if self.progress_callback:
-                self.progress_callback(f"Analyzing development patterns for {username}")
-            user_data['development_patterns'] = self.analyze_development_patterns(username)
+            # Extended user data - with error handling
+            try:
+                if self.progress_callback:
+                    self.progress_callback(f"Collecting extended data for {username}")
+                user_data['extended_user_data'] = self.collect_extended_user_data(username)
+            except Exception as e:
+                logging.warning(f"Failed to collect extended data for {username}: {e}")
+                user_data['extended_user_data'] = {}
             
-            # Commit activity
-            if self.progress_callback:
-                self.progress_callback(f"Analyzing commit activity for {username}")
-            user_data['commit_activity'] = self.analyze_commit_activity(username)
+            # Development patterns - with error handling
+            try:
+                if self.progress_callback:
+                    self.progress_callback(f"Analyzing development patterns for {username}")
+                user_data['development_patterns'] = self.analyze_development_patterns(username)
+            except Exception as e:
+                logging.warning(f"Failed to analyze development patterns for {username}: {e}")
+                user_data['development_patterns'] = {}
             
-            # NEW: Social network analysis
-            if self.progress_callback:
-                self.progress_callback(f"Analyzing social network for {username}")
-            user_data['social_network'] = self.collect_social_network_data(username)
+            # Commit activity (with optional all commits fetch) - with error handling
+            try:
+                commit_mode = "all commits" if fetch_all_commits else "recent commits"
+                if self.progress_callback:
+                    self.progress_callback(f"Analyzing commit activity ({commit_mode}) for {username}")
+                user_data['commit_activity'] = self.analyze_commit_activity(username, fetch_all_commits=fetch_all_commits)
+            except Exception as e:
+                logging.warning(f"Failed to analyze commit activity for {username}: {e}")
+                user_data['commit_activity'] = {
+                    'total_commits': 0 if fetch_all_commits else 0,
+                    'total_recent_commits': 0,
+                    'active_days': [],
+                    'commit_frequency_by_day': {},
+                    'commit_frequency_by_hour': {},
+                    'recent_commits': [],
+                    'most_active_repo': None,
+                    'commit_streaks': [],
+                    'avg_commits_per_day': 0,
+                    'repositories_analyzed': 0,
+                    'total_repositories': 0,
+                    'fetch_mode': 'all' if fetch_all_commits else 'recent'
+                }
             
-            # NEW: Repository portfolio analysis
-            if self.progress_callback:
-                self.progress_callback(f"Analyzing repository portfolio for {username}")
-            user_data['repository_portfolio'] = self.analyze_repository_portfolio(username)
+            # NEW: Social network analysis - with error handling
+            try:
+                if self.progress_callback:
+                    self.progress_callback(f"Analyzing social network for {username}")
+                user_data['social_network'] = self.collect_social_network_data(username)
+            except Exception as e:
+                logging.warning(f"Failed to analyze social network for {username}: {e}")
+                user_data['social_network'] = {}
             
-            # NEW: Contribution quality analysis
-            if self.progress_callback:
-                self.progress_callback(f"Analyzing contribution quality for {username}")
-            user_data['contribution_quality'] = self.analyze_contribution_quality(username)
+            # NEW: Repository portfolio analysis - with error handling
+            try:
+                if self.progress_callback:
+                    self.progress_callback(f"Analyzing repository portfolio for {username}")
+                user_data['repository_portfolio'] = self.analyze_repository_portfolio(username)
+            except Exception as e:
+                logging.warning(f"Failed to analyze repository portfolio for {username}: {e}")
+                user_data['repository_portfolio'] = {}
             
+            # NEW: Contribution quality analysis - with error handling
+            try:
+                if self.progress_callback:
+                    self.progress_callback(f"Analyzing contribution quality for {username}")
+                user_data['contribution_quality'] = self.analyze_contribution_quality(username)
+            except Exception as e:
+                logging.warning(f"Failed to analyze contribution quality for {username}: {e}")
+                user_data['contribution_quality'] = {}
+            
+            logging.info(f"Successfully collected data for user: {username}")
             return user_data
             
         except Exception as e:
             logging.error(f"Error collecting single user data for {username}: {e}")
             return None
 
-    def analyze_commit_activity(self, username: str, days: int = DEFAULT_COMMIT_ANALYSIS_DAYS) -> Dict:
+    def analyze_commit_activity(self, username: str, days: int = DEFAULT_COMMIT_ANALYSIS_DAYS, fetch_all_commits: bool = False) -> Dict:
 
         if not username:
             raise ValueError("username cannot be empty")
         
         try:
             if self.stop_event and self.stop_event.is_set():
-                return {}
+                return {
+                    'total_commits': 0 if fetch_all_commits else 0,
+                    'total_recent_commits': 0,
+                    'active_days': [],
+                    'commit_frequency_by_day': {},
+                    'commit_frequency_by_hour': {},
+                    'recent_commits': [],
+                    'most_active_repo': None,
+                    'commit_streaks': [],
+                    'avg_commits_per_day': 0,
+                    'repositories_analyzed': 0,
+                    'total_repositories': 0,
+                    'fetch_mode': 'all' if fetch_all_commits else 'recent'
+                }
             
             user = self.github.get_user(username)
             repos = list(user.get_repos())
@@ -596,16 +652,18 @@ class AdvancedGitHubMiner:
             cutoff_date = datetime.now() - timedelta(days=days)
             
             activity_data = {
+                'total_commits': 0 if fetch_all_commits else 0,
                 'total_recent_commits': 0,
                 'active_days': set(),
                 'commit_frequency_by_day': {},
                 'commit_frequency_by_hour': {},
-                'recent_commits': [],
+                'recent_commits': [],  # Limited to 50 commits max
                 'most_active_repo': None,
                 'commit_streaks': [],
                 'avg_commits_per_day': 0,
                 'repositories_analyzed': 0,
-                'total_repositories': len([r for r in repos if not r.fork])
+                'total_repositories': len([r for r in repos if not r.fork]),
+                'fetch_mode': 'all' if fetch_all_commits else 'recent'
             }
             
             repo_commit_counts = {}
@@ -613,88 +671,129 @@ class AdvancedGitHubMiner:
             # Filter out forks and get only user's original repos
             original_repos = [repo for repo in repos if not repo.fork]
             
-            for repo in original_repos[:15]:  # Limit to avoid rate limits
+            # If user has no original repositories, still return valid structure with their basic info
+            if not original_repos:
+                logging.info(f"User {username} has no original repositories (only forks or no repos), returning basic activity data")
+                activity_data['active_days'] = list(activity_data['active_days'])
+                return activity_data
+            
+            # Limit repositories to analyze (more when fetching all commits to get comprehensive data)
+            repo_limit = 25 if fetch_all_commits else 15
+            
+            for repo in original_repos[:repo_limit]:
                 try:
                     if self.stop_event and self.stop_event.is_set():
                         break
                     
                     activity_data['repositories_analyzed'] += 1
-                    logging.info(f"Analyzing commits for repo: {repo.name}")
+                    logging.info(f"Analyzing commits for repo: {repo.name} ({'counting all commits' if fetch_all_commits else 'recent commits'})")
                     
                     # Try different approaches to get commits
                     commits = []
-                    try:
-                        # Method 1: Get commits by author since cutoff date
-                        commits = list(repo.get_commits(author=username, since=cutoff_date))
-                    except GithubException as e:
-                        logging.warning(f"Method 1 failed for {repo.name}: {e}")
+                    
+                    if fetch_all_commits:
+                        # Fetch ALL commits but only count them, don't store data
                         try:
-                            # Method 2: Get recent commits and filter by author
-                            all_commits = list(repo.get_commits(since=cutoff_date))
-                            commits = [c for c in all_commits if c.author and c.author.login == username]
-                        except GithubException as e2:
-                            logging.warning(f"Method 2 failed for {repo.name}: {e2}")
+                            # Method 1: Get all commits by author (no date filter)
+                            all_commits = list(repo.get_commits(author=username))
+                            commits = all_commits  # Use all for counting
+                            logging.info(f"Found {len(all_commits)} total commits in {repo.name}")
+                        except GithubException as e:
+                            logging.warning(f"Failed to get all commits for {repo.name}: {e}")
                             try:
-                                # Method 3: Get commits without date filter and filter manually
-                                recent_commits = list(repo.get_commits()[:50])  # Get last 50 commits
-                                commits = []
-                                for c in recent_commits:
-                                    if c.author and c.author.login == username:
-                                        commit_date = c.commit.author.date
-                                        if commit_date.tzinfo:
-                                            commit_date = commit_date.replace(tzinfo=None)
-                                        if commit_date >= cutoff_date:
-                                            commits.append(c)
-                            except GithubException as e3:
-                                logging.warning(f"Method 3 failed for {repo.name}: {e3}")
+                                # Fallback: Get commits without author filter and filter manually
+                                all_commits = list(repo.get_commits())
+                                commits = [c for c in all_commits if c.author and c.author.login == username]
+                            except GithubException as e2:
+                                logging.warning(f"Fallback failed for {repo.name}: {e2}")
                                 continue
+                    else:
+                        # Fetch RECENT commits only (existing logic)
+                        try:
+                            # Method 1: Get commits by author since cutoff date
+                            commits = list(repo.get_commits(author=username, since=cutoff_date))
+                        except GithubException as e:
+                            logging.warning(f"Method 1 failed for {repo.name}: {e}")
+                            try:
+                                # Method 2: Get recent commits and filter by author
+                                all_commits = list(repo.get_commits(since=cutoff_date))
+                                commits = [c for c in all_commits if c.author and c.author.login == username]
+                            except GithubException as e2:
+                                logging.warning(f"Method 2 failed for {repo.name}: {e2}")
+                                try:
+                                    # Method 3: Get commits without date filter and filter manually
+                                    recent_commits = list(repo.get_commits()[:50])  # Get last 50 commits
+                                    commits = []
+                                    for c in recent_commits:
+                                        if c.author and c.author.login == username:
+                                            commit_date = c.commit.author.date
+                                            if commit_date.tzinfo:
+                                                commit_date = commit_date.replace(tzinfo=None)
+                                            if commit_date >= cutoff_date:
+                                                commits.append(c)
+                                except GithubException as e3:
+                                    logging.warning(f"Method 3 failed for {repo.name}: {e3}")
+                                    continue
                     
                     repo_commits = 0
                     
                     for commit in commits:
                         try:
                             commit_date = commit.commit.author.date
-                            activity_data['total_recent_commits'] += 1
                             repo_commits += 1
                             
                             # Convert to naive datetime for consistency
                             if commit_date.tzinfo:
                                 commit_date = commit_date.replace(tzinfo=None)
                             
-                            day_key = commit_date.strftime('%Y-%m-%d')
-                            hour_key = str(commit_date.hour)
+                            # Count all commits if fetch_all_commits is True
+                            if fetch_all_commits:
+                                activity_data['total_commits'] += 1
                             
-                            activity_data['active_days'].add(day_key)
-                            
-                            # Track daily frequency
-                            if day_key not in activity_data['commit_frequency_by_day']:
-                                activity_data['commit_frequency_by_day'][day_key] = 0
-                            activity_data['commit_frequency_by_day'][day_key] += 1
-                            
-                            # Track hourly frequency
-                            if hour_key not in activity_data['commit_frequency_by_hour']:
-                                activity_data['commit_frequency_by_hour'][hour_key] = 0
-                            activity_data['commit_frequency_by_hour'][hour_key] += 1
-                            
-                            # Store commit details (limit for memory)
-                            if len(activity_data['recent_commits']) < 100:
-                                activity_data['recent_commits'].append({
-                                    'repo': repo.name,
-                                    'sha': commit.sha,
-                                    'message': commit.commit.message[:200],  # Truncate message
-                                    'date': commit_date,
-                                    'stats': {
-                                        'additions': commit.stats.additions if commit.stats else 0,
-                                        'deletions': commit.stats.deletions if commit.stats else 0,
-                                        'total': commit.stats.total if commit.stats else 0
+                            # Always count recent commits for comparison
+                            if commit_date >= cutoff_date:
+                                activity_data['total_recent_commits'] += 1
+                                
+                                # Only store recent commit details and limit to 50
+                                if len(activity_data['recent_commits']) < 50:
+                                    day_key = commit_date.strftime('%Y-%m-%d')
+                                    hour_key = str(commit_date.hour)
+                                    
+                                    activity_data['active_days'].add(day_key)
+                                    
+                                    # Track daily frequency
+                                    if day_key not in activity_data['commit_frequency_by_day']:
+                                        activity_data['commit_frequency_by_day'][day_key] = 0
+                                    activity_data['commit_frequency_by_day'][day_key] += 1
+                                    
+                                    # Track hourly frequency
+                                    if hour_key not in activity_data['commit_frequency_by_hour']:
+                                        activity_data['commit_frequency_by_hour'][hour_key] = 0
+                                    activity_data['commit_frequency_by_hour'][hour_key] += 1
+                                    
+                                    # Store commit details (limited to 50 recent commits)
+                                    commit_details = {
+                                        'repo': repo.name,
+                                        'sha': commit.sha,
+                                        'message': commit.commit.message[:200],  # Truncate message
+                                        'date': commit_date,
+                                        'stats': {
+                                            'additions': commit.stats.additions if commit.stats else 0,
+                                            'deletions': commit.stats.deletions if commit.stats else 0,
+                                            'total': commit.stats.total if commit.stats else 0
+                                        }
                                     }
-                                })
+                                    
+                                    activity_data['recent_commits'].append(commit_details)
                             
                         except Exception as e:
                             logging.warning(f"Error processing commit in {repo.name}: {e}")
                             continue
                     
                     repo_commit_counts[repo.name] = repo_commits
+                    
+                    if fetch_all_commits:
+                        logging.info(f"Counted {repo_commits} total commits from {repo.name}")
                     
                 except Exception as e:
                     logging.error(f"Error analyzing repository {repo.name}: {e}")
@@ -704,7 +803,7 @@ class AdvancedGitHubMiner:
             if repo_commit_counts:
                 activity_data['most_active_repo'] = max(repo_commit_counts, key=repo_commit_counts.get)
             
-            # Calculate average commits per day
+            # Calculate average commits per day based on recent commits data
             total_days = len(activity_data['active_days'])
             if total_days > 0:
                 activity_data['avg_commits_per_day'] = activity_data['total_recent_commits'] / total_days
@@ -712,11 +811,29 @@ class AdvancedGitHubMiner:
             # Convert active_days set to list for JSON serialization
             activity_data['active_days'] = list(activity_data['active_days'])
             
+            if fetch_all_commits:
+                logging.info(f"Completed analysis for {username}: {activity_data['total_commits']} total commits, {activity_data['total_recent_commits']} recent commits (stored {len(activity_data['recent_commits'])} recent commit details)")
+            else:
+                logging.info(f"Completed analysis for {username}: {activity_data['total_recent_commits']} recent commits (stored {len(activity_data['recent_commits'])} commit details)")
+            
             return activity_data
             
         except GithubException as e:
             logging.error(f"Error analyzing commit activity for {username}: {e}")
-            return {}
+            return {
+                'total_commits': 0 if fetch_all_commits else 0,
+                'total_recent_commits': 0,
+                'active_days': [],
+                'commit_frequency_by_day': {},
+                'commit_frequency_by_hour': {},
+                'recent_commits': [],
+                'most_active_repo': None,
+                'commit_streaks': [],
+                'avg_commits_per_day': 0,
+                'repositories_analyzed': 0,
+                'total_repositories': 0,
+                'fetch_mode': 'all' if fetch_all_commits else 'recent'
+            }
 
     def append_single_user_to_export(self, user_data: Dict, filename: str):
 
@@ -907,10 +1024,13 @@ class AdvancedGitHubMiner:
         # Commit activity
         commit_activity = user_data.get('commit_activity', {})
         flattened.update({
+            'total_commits': commit_activity.get('total_commits', 0),  # Count only (no data stored)
             'recent_commits_total': commit_activity.get('total_recent_commits', 0),
             'recent_active_days': len(commit_activity.get('active_days', [])),
             'avg_commits_per_day': commit_activity.get('avg_commits_per_day', 0),
-            'repositories_analyzed': commit_activity.get('repositories_analyzed', 0)
+            'repositories_analyzed': commit_activity.get('repositories_analyzed', 0),
+            'recent_commits': commit_activity.get('recent_commits', []),  # Limited to 50 max
+            'fetch_mode': commit_activity.get('fetch_mode', 'recent')
         })
         
         # NEW: Social network features
@@ -965,7 +1085,7 @@ class AdvancedGitHubMiner:
         
         return flattened 
 
-    def mine_repository_contributors(self, repo_url: str, save_immediately: bool = False, filename: str = None) -> List[Dict]:
+    def mine_repository_contributors(self, repo_url: str, save_immediately: bool = False, filename: str = None, fetch_all_commits: bool = False) -> List[Dict]:
         """
         Mine repository contributors and optionally save data immediately.
         
@@ -973,6 +1093,7 @@ class AdvancedGitHubMiner:
             repo_url (str): GitHub repository URL (e.g., "https://github.com/owner/repo")
             save_immediately (bool): If True, save data immediately after each contributor is processed
             filename (str): Base filename for immediate saving (required if save_immediately=True)
+            fetch_all_commits (bool): If True, fetch all commits instead of just recent commits
             
         Returns:
             List[Dict]: List of contributor data
@@ -1007,14 +1128,16 @@ class AdvancedGitHubMiner:
                 return []
             
             # Mine contributor data using parallel collection with optional immediate saving
+            commit_mode = "all commits" if fetch_all_commits else "recent commits"
             if self.progress_callback:
-                self.progress_callback(f"Starting to mine data for {len(contributor_usernames)} contributors...")
+                self.progress_callback(f"Starting to mine data ({commit_mode}) for {len(contributor_usernames)} contributors...")
             
             results = self.parallel_data_collection(
                 contributor_usernames,
                 max_workers=2,  # Keep low to avoid rate limits
                 save_immediately=save_immediately,
-                filename=filename
+                filename=filename,
+                fetch_all_commits=fetch_all_commits
             )
             
             if self.progress_callback:

@@ -101,6 +101,28 @@ class GitHubMinerGUI:
         self.entry_url = ttk.Entry(self.profile_tab, width=50)
         self.entry_url.pack(pady=5)
         
+        # Options frame
+        self.options_frame = ttk.Frame(self.profile_tab)
+        self.options_frame.pack(pady=10)
+        
+        # All commits option
+        self.profile_all_commits_var = tk.BooleanVar(value=False)
+        self.profile_all_commits_check = ttk.Checkbutton(
+            self.options_frame,
+            text="Count ALL commits (stores max 50 recent commit details)",
+            variable=self.profile_all_commits_var
+        )
+        self.profile_all_commits_check.pack(pady=5)
+        
+        # Help label
+        self.help_label = ttk.Label(
+            self.options_frame,
+            text="• Recent commits: analyzes last 30 days only\n• All commits: counts all-time commits but stores max 50 recent details",
+            font=("TkDefaultFont", 8),
+            foreground="gray"
+        )
+        self.help_label.pack(pady=5)
+        
         # Buttons frame
         self.button_frame = ttk.Frame(self.profile_tab)
         self.button_frame.pack(pady=10)
@@ -126,6 +148,28 @@ class GitHubMinerGUI:
         self.repo_label_url.pack(pady=5)
         self.repo_entry_url = ttk.Entry(self.repo_tab, width=50)
         self.repo_entry_url.pack(pady=5)
+        
+        # Options frame
+        self.repo_options_frame = ttk.Frame(self.repo_tab)
+        self.repo_options_frame.pack(pady=10)
+        
+        # All commits option
+        self.repo_all_commits_var = tk.BooleanVar(value=False)
+        self.repo_all_commits_check = ttk.Checkbutton(
+            self.repo_options_frame,
+            text="Count ALL commits for each contributor (stores max 50 recent commit details)",
+            variable=self.repo_all_commits_var
+        )
+        self.repo_all_commits_check.pack(pady=5)
+        
+        # Help label
+        self.repo_help_label = ttk.Label(
+            self.repo_options_frame,
+            text="• Recent commits: analyzes last 30 days only\n• All commits: counts all-time commits but stores max 50 recent details per contributor",
+            font=("TkDefaultFont", 8),
+            foreground="gray"
+        )
+        self.repo_help_label.pack(pady=5)
         
         # Buttons frame
         self.repo_button_frame = ttk.Frame(self.repo_tab)
@@ -519,6 +563,8 @@ class GitHubMinerGUI:
     def start_profile_mining(self):
         """Start profile mining in a separate thread."""
         self.mine_button.config(state='disabled')
+        self.stop_button.config(state='normal')  # Enable stop button
+        self.stop_event.clear()  # Reset stop event
         self.progress_bar.start()
         self.status_text.delete(1.0, tk.END)
         
@@ -543,9 +589,19 @@ class GitHubMinerGUI:
             profile_url = self.entry_url.get()
             
             username = self.extract_username(profile_url)
-            self.update_status(f"Starting mining for user: {username}")
             
-            miner = AdvancedGitHubMiner(token, progress_callback=self.update_status)
+            # Get the all commits option state
+            fetch_all_commits = self.profile_all_commits_var.get()
+            commit_mode = "all commits" if fetch_all_commits else "recent commits"
+            
+            self.update_status(f"Starting mining for user: {username}")
+            self.update_status(f"Commit analysis mode: {commit_mode}")
+            if fetch_all_commits:
+                self.update_status("Will count all-time commits but store max 50 recent commit details")
+            else:
+                self.update_status("Will analyze commits from last 30 days only")
+            
+            miner = AdvancedGitHubMiner(token, progress_callback=self.update_status, stop_event=self.stop_event)
             
             # Generate filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -553,25 +609,52 @@ class GitHubMinerGUI:
             
             self.update_status("Collecting user data with immediate saving...")
             
-            # Use immediate saving with standard parallel_data_collection
+            # Use immediate saving with the fetch_all_commits option
             dataset = miner.parallel_data_collection(
                 [username], 
                 max_workers=1,
                 save_immediately=True,
-                filename=filename
+                filename=filename,
+                fetch_all_commits=fetch_all_commits
             )
             
             if not dataset or dataset[0] is None:
+                if self.stop_event.is_set():
+                    self.update_status("Profile mining stopped by user.")
+                    return
                 raise ValueError(f"No data collected for user: {username}")
+            
+            # Show commit analysis results
+            user_data = dataset[0]
+            commit_activity = user_data.get('commit_activity', {})
+            
+            if fetch_all_commits:
+                total_commits = commit_activity.get('total_commits', 0)
+                recent_commits = commit_activity.get('total_recent_commits', 0)
+                stored_commits = len(commit_activity.get('recent_commits', []))
+                
+                self.update_status(f"Analysis complete: {total_commits} total commits, {recent_commits} recent commits")
+                self.update_status(f"Stored {stored_commits} recent commit details (max 50)")
+            else:
+                recent_commits = commit_activity.get('total_recent_commits', 0)
+                stored_commits = len(commit_activity.get('recent_commits', []))
+                
+                self.update_status(f"Analysis complete: {recent_commits} recent commits")
+                self.update_status(f"Stored {stored_commits} commit details")
             
             self.update_status("Mining completed successfully!")
             self.update_status(f"Data saved to {filename}_raw.json and {filename}_ml_features.csv")
             
-            messagebox.showinfo("Success", 
-                f"Data mined and exported for {username}!\n"
-                f"Files saved:\n"
-                f"- {filename}_raw.json\n"
-                f"- {filename}_ml_features.csv")
+            success_message = f"Data mined and exported for {username}!\n"
+            if fetch_all_commits:
+                success_message += f"All-time commits: {commit_activity.get('total_commits', 0)}\n"
+                success_message += f"Recent commits: {commit_activity.get('total_recent_commits', 0)}\n"
+                success_message += f"Commit details stored: {len(commit_activity.get('recent_commits', []))}\n"
+            else:
+                success_message += f"Recent commits: {commit_activity.get('total_recent_commits', 0)}\n"
+            success_message += f"Files saved:\n- {filename}_raw.json\n- {filename}_ml_features.csv"
+            
+            messagebox.showinfo("Success", success_message)
             
         except ValueError as e:
             self.update_status(f"Error: {str(e)}")
@@ -582,6 +665,7 @@ class GitHubMinerGUI:
         finally:
             self.progress_bar.stop()
             self.mine_button.config(state='normal')
+            self.stop_button.config(state='disabled')  # Disable stop button
     
     def mine_repository(self):
         """Mine repository contributors with immediate saving."""
@@ -592,7 +676,16 @@ class GitHubMinerGUI:
             if not token or not repo_url:
                 raise ValueError("Both GitHub token and repository URL are required")
             
+            # Get the all commits option state
+            fetch_all_commits = self.repo_all_commits_var.get()
+            commit_mode = "all commits" if fetch_all_commits else "recent commits"
+            
             self.update_status(f"Starting mining for repository: {repo_url}")
+            self.update_status(f"Commit analysis mode: {commit_mode}")
+            if fetch_all_commits:
+                self.update_status("Will count all-time commits but store max 50 recent commit details per contributor")
+            else:
+                self.update_status("Will analyze commits from last 30 days only per contributor")
             
             miner = AdvancedGitHubMiner(token, progress_callback=self.update_status, stop_event=self.stop_event)
             
@@ -605,26 +698,57 @@ class GitHubMinerGUI:
             self.update_status(f"Data will be saved immediately after each contributor is processed")
             self.update_status(f"Files: {filename}_raw.json and {filename}_ml_features.csv")
             
-            # Mine repository contributors with immediate saving
+            # Mine repository contributors with immediate saving and all commits option
             dataset = miner.mine_repository_contributors(
                 repo_url,
                 save_immediately=True,
-                filename=filename
+                filename=filename,
+                fetch_all_commits=fetch_all_commits
             )
             
             if not dataset:
+                if self.stop_event.is_set():
+                    self.update_status("Repository mining stopped by user.")
+                    return
                 self.update_status("No contributor data was collected")
                 messagebox.showwarning("Warning", "No contributor data was collected from this repository")
             else:
+                # Analyze commit statistics
+                total_all_commits = 0
+                total_recent_commits = 0
+                total_stored_commits = 0
+                
+                for user_data in dataset:
+                    if user_data:
+                        commit_activity = user_data.get('commit_activity', {})
+                        if fetch_all_commits:
+                            total_all_commits += commit_activity.get('total_commits', 0)
+                        total_recent_commits += commit_activity.get('total_recent_commits', 0)
+                        total_stored_commits += len(commit_activity.get('recent_commits', []))
+                
                 self.update_status("Repository mining completed successfully!")
+                
+                if fetch_all_commits:
+                    self.update_status(f"Statistics: {total_all_commits} total commits, {total_recent_commits} recent commits across all contributors")
+                    self.update_status(f"Stored {total_stored_commits} commit details (max 50 per contributor)")
+                else:
+                    self.update_status(f"Statistics: {total_recent_commits} recent commits across all contributors")
+                    self.update_status(f"Stored {total_stored_commits} commit details")
+                
                 self.update_status(f"Data saved to {filename}_raw.json and {filename}_ml_features.csv")
                 
-                messagebox.showinfo("Success", 
-                    f"Repository mining completed!\n"
-                    f"Contributors processed: {len(dataset)}\n"
-                    f"Data saved immediately after each contributor to:\n"
-                    f"- {filename}_raw.json\n"
-                    f"- {filename}_ml_features.csv")
+                success_message = f"Repository mining completed!\n"
+                success_message += f"Contributors processed: {len(dataset)}\n"
+                if fetch_all_commits:
+                    success_message += f"Total all-time commits: {total_all_commits}\n"
+                    success_message += f"Total recent commits: {total_recent_commits}\n"
+                    success_message += f"Commit details stored: {total_stored_commits}\n"
+                else:
+                    success_message += f"Total recent commits: {total_recent_commits}\n"
+                success_message += f"Data saved immediately after each contributor to:\n"
+                success_message += f"- {filename}_raw.json\n- {filename}_ml_features.csv"
+                
+                messagebox.showinfo("Success", success_message)
             
         except ValueError as e:
             self.update_status(f"Error: {str(e)}")
@@ -635,6 +759,7 @@ class GitHubMinerGUI:
         finally:
             self.progress_bar.stop()
             self.mine_repo_button.config(state='normal')
+            self.stop_button.config(state='disabled')  # Disable stop button
     
     def extract_username(self, url: str) -> str:
         """
