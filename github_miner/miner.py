@@ -21,31 +21,9 @@ from .config import GITHUB_TOKEN, DEFAULT_COMMIT_ANALYSIS_DAYS, DEFAULT_TOP_REPO
 
 
 class AdvancedGitHubMiner:
-    """
-    Advanced GitHub data mining class for comprehensive user and repository analysis.
-    
-    This class provides methods for:
-    - Mining GitHub archive data
-    - Analyzing development patterns
-    - Collecting extended user and repository data
-    - Analyzing commit activity and contribution patterns
-    - Language analysis and interest detection
-    - Parallel data collection
-    - Export to various formats for machine learning
-    """
     
     def __init__(self, github_token: str = None, progress_callback=None, stop_event=None):
-        """
-        Initialize the AdvancedGitHubMiner instance.
-        
-        Args:
-            github_token (str, optional): GitHub personal access token
-            progress_callback (callable, optional): Callback function for progress updates
-            stop_event (threading.Event, optional): Event to signal stopping of operations
-        
-        Raises:
-            ValueError: If no valid GitHub token is provided
-        """
+
         if github_token is None:
             github_token = GITHUB_TOKEN
             
@@ -66,19 +44,7 @@ class AdvancedGitHubMiner:
         self.headers = {'Authorization': f'token {github_token}'}
         
     def mine_github_archive(self, date_range: tuple, event_types: List[str] = None):
-        """
-        Mine GitHub archive data for specific date range and event types.
-        
-        Args:
-            date_range (tuple): Tuple of (start_date, end_date) in 'YYYY-MM-DD' format
-            event_types (List[str], optional): List of GitHub event types to filter
-            
-        Returns:
-            List: List of events data
-            
-        Raises:
-            ValueError: If date_range format is invalid
-        """
+
         if not isinstance(date_range, tuple) or len(date_range) != 2:
             raise ValueError("date_range must be a tuple of (start_date, end_date)")
         
@@ -112,19 +78,7 @@ class AdvancedGitHubMiner:
         return events_data
     
     def get_contributor_network(self, repo_owner: str, repo_name: str) -> Dict:
-        """
-        Get contributor network data for a repository.
-        
-        Args:
-            repo_owner (str): Repository owner username
-            repo_name (str): Repository name
-            
-        Returns:
-            Dict: Dictionary containing contributors and collaboration data
-            
-        Raises:
-            ValueError: If repo_owner or repo_name is empty
-        """
+
         if not repo_owner or not repo_name:
             raise ValueError("repo_owner and repo_name cannot be empty")
         
@@ -169,18 +123,7 @@ class AdvancedGitHubMiner:
             return {}
     
     def analyze_development_patterns(self, username: str) -> Dict:
-        """
-        Analyze development patterns for a given user.
-        
-        Args:
-            username (str): GitHub username to analyze
-            
-        Returns:
-            Dict: Development patterns analysis including commit frequency, timing, etc.
-            
-        Raises:
-            ValueError: If username is empty
-        """
+
         if not username:
             raise ValueError("username cannot be empty")
         
@@ -317,19 +260,7 @@ class AdvancedGitHubMiner:
             return {}
     
     def collect_issue_sentiment_data(self, repo_owner: str, repo_name: str) -> List[Dict]:
-        """
-        Collect issue sentiment data for a repository.
-        
-        Args:
-            repo_owner (str): Repository owner username
-            repo_name (str): Repository name
-            
-        Returns:
-            List[Dict]: List of issue data with sentiment information
-            
-        Raises:
-            ValueError: If repo_owner or repo_name is empty
-        """
+
         if not repo_owner or not repo_name:
             raise ValueError("repo_owner and repo_name cannot be empty")
         
@@ -380,18 +311,7 @@ class AdvancedGitHubMiner:
             return []
 
     def collect_extended_user_data(self, username: str) -> Dict:
-        """
-        Collect extended user data including starred repos, gists, organizations, etc.
-        
-        Args:
-            username (str): GitHub username to analyze
-            
-        Returns:
-            Dict: Extended user data
-            
-        Raises:
-            ValueError: If username is empty
-        """
+
         if not username:
             raise ValueError("username cannot be empty")
         
@@ -465,19 +385,7 @@ class AdvancedGitHubMiner:
             return {}
 
     def collect_extended_repo_data(self, repo_owner: str, repo_name: str) -> Dict:
-        """
-        Collect extended repository data including branches, releases, statistics, etc.
-        
-        Args:
-            repo_owner (str): Repository owner username
-            repo_name (str): Repository name
-            
-        Returns:
-            Dict: Extended repository data
-            
-        Raises:
-            ValueError: If repo_owner or repo_name is empty
-        """
+
         if not repo_owner or not repo_name:
             raise ValueError("repo_owner and repo_name cannot be empty")
         
@@ -556,18 +464,7 @@ class AdvancedGitHubMiner:
             return {}
 
     def parallel_data_collection(self, usernames: List[str], max_workers: int = 5, save_immediately: bool = False, filename: str = None) -> List[Dict]:
-        """
-        Collect data for multiple users in parallel.
-        
-        Args:
-            usernames (List[str]): List of GitHub usernames to process
-            max_workers (int): Maximum number of worker threads
-            save_immediately (bool): If True, save data immediately after each user is processed
-            filename (str): Base filename for immediate saving (required if save_immediately=True)
-            
-        Returns:
-            List[Dict]: List of collected user data
-        """
+
         if save_immediately and not filename:
             raise ValueError("filename is required when save_immediately=True")
         
@@ -630,15 +527,7 @@ class AdvancedGitHubMiner:
         return results
 
     def collect_single_user(self, username: str) -> Dict:
-        """
-        Collect comprehensive data for a single user.
-        
-        Args:
-            username (str): GitHub username to analyze
-            
-        Returns:
-            Dict: Comprehensive user data
-        """
+
         try:
             if self.stop_event and self.stop_event.is_set():
                 return None
@@ -670,7 +559,20 @@ class AdvancedGitHubMiner:
                 self.progress_callback(f"Analyzing commit activity for {username}")
             user_data['commit_activity'] = self.analyze_commit_activity(username)
             
-            # Additional analysis methods would go here...
+            # NEW: Social network analysis
+            if self.progress_callback:
+                self.progress_callback(f"Analyzing social network for {username}")
+            user_data['social_network'] = self.collect_social_network_data(username)
+            
+            # NEW: Repository portfolio analysis
+            if self.progress_callback:
+                self.progress_callback(f"Analyzing repository portfolio for {username}")
+            user_data['repository_portfolio'] = self.analyze_repository_portfolio(username)
+            
+            # NEW: Contribution quality analysis
+            if self.progress_callback:
+                self.progress_callback(f"Analyzing contribution quality for {username}")
+            user_data['contribution_quality'] = self.analyze_contribution_quality(username)
             
             return user_data
             
@@ -679,19 +581,7 @@ class AdvancedGitHubMiner:
             return None
 
     def analyze_commit_activity(self, username: str, days: int = DEFAULT_COMMIT_ANALYSIS_DAYS) -> Dict:
-        """
-        Analyze recent commit activity for a user.
-        
-        Args:
-            username (str): GitHub username to analyze
-            days (int): Number of days to look back for activity
-            
-        Returns:
-            Dict: Commit activity analysis
-            
-        Raises:
-            ValueError: If username is empty
-        """
+
         if not username:
             raise ValueError("username cannot be empty")
         
@@ -829,13 +719,7 @@ class AdvancedGitHubMiner:
             return {}
 
     def append_single_user_to_export(self, user_data: Dict, filename: str):
-        """
-        Append a single user's data to export files immediately after collection.
-        
-        Args:
-            user_data (Dict): Single user data dictionary
-            filename (str): Base filename for output files
-        """
+
         if not user_data:
             logging.warning("No user data to append")
             return
@@ -1029,6 +913,56 @@ class AdvancedGitHubMiner:
             'repositories_analyzed': commit_activity.get('repositories_analyzed', 0)
         })
         
+        # NEW: Social network features
+        social = user_data.get('social_network', {})
+        flattened.update({
+            'followers_sample_count': len(social.get('followers_list', [])),
+            'following_sample_count': len(social.get('following_list', [])),
+            'mutual_connections_count': len(social.get('mutual_connections', [])),
+            'follower_to_following_ratio': social.get('follower_to_following_ratio', 0),
+            'social_influence_score': social.get('social_influence_score', 0)
+        })
+        
+        # NEW: Repository portfolio features
+        portfolio = user_data.get('repository_portfolio', {})
+        flattened.update({
+            'total_repositories': portfolio.get('total_repositories', 0),
+            'original_repos': portfolio.get('original_repos', 0),
+            'forked_repos': portfolio.get('forked_repos', 0),
+            'primary_language': max(portfolio.get('language_distribution', {}).items(), key=lambda x: x[1])[0] if portfolio.get('language_distribution') else '',
+            'language_diversity': len(portfolio.get('language_distribution', {})),
+            'avg_repo_size': sum(r['size_kb'] for r in portfolio.get('repository_sizes', [])) / len(portfolio.get('repository_sizes', [])) if portfolio.get('repository_sizes') else 0,
+            'total_stars_received': sum(r['stars'] for r in portfolio.get('repository_sizes', [])),
+            'total_forks_received': sum(r['forks'] for r in portfolio.get('repository_sizes', [])),
+            'license_diversity': len(portfolio.get('license_preferences', {})),
+            'topics_used_count': len(portfolio.get('topics_used', {})),
+            'collaboration_repos_count': len(portfolio.get('collaboration_repos', [])),
+            'maintained_repos_ratio': portfolio.get('maintenance_patterns', {}).get('maintenance_ratio', 0),
+            'avg_repo_age_days': portfolio.get('maintenance_patterns', {}).get('avg_repo_age_days', 0),
+            'documentation_score': portfolio.get('readme_analysis', {}).get('documentation_score', 0),
+            'avg_readme_length': portfolio.get('readme_analysis', {}).get('avg_readme_length', 0)
+        })
+        
+        # NEW: Contribution quality features
+        quality = user_data.get('contribution_quality', {})
+        commit_analysis = quality.get('commit_message_analysis', {})
+        pr_analysis = quality.get('pull_request_patterns', {})
+        issue_analysis = quality.get('issue_management', {})
+        
+        flattened.update({
+            'avg_commit_message_length': commit_analysis.get('avg_message_length', 0),
+            'conventional_commits_ratio': commit_analysis.get('conventional_commits_ratio', 0),
+            'multiline_commits_ratio': commit_analysis.get('multiline_commits_ratio', 0),
+            'pr_merge_rate': pr_analysis.get('merge_rate', 0),
+            'avg_comments_per_pr': pr_analysis.get('avg_comments_per_pr', 0),
+            'avg_changes_per_pr': pr_analysis.get('avg_changes_per_pr', 0),
+            'issue_closure_rate': issue_analysis.get('closure_rate', 0),
+            'avg_issue_description_length': issue_analysis.get('avg_issue_description_length', 0),
+            'documentation_ratio': quality.get('documentation_contributions', {}).get('documentation_ratio', 0),
+            'testing_ratio': quality.get('testing_patterns', {}).get('testing_ratio', 0),
+            'ci_adoption_ratio': quality.get('ci_cd_adoption', {}).get('ci_adoption_ratio', 0)
+        })
+        
         return flattened 
 
     def mine_repository_contributors(self, repo_url: str, save_immediately: bool = False, filename: str = None) -> List[Dict]:
@@ -1130,3 +1064,387 @@ class AdvancedGitHubMiner:
                 return owner, repo_name
         
         raise ValueError(f"Invalid GitHub repository URL: {repo_url}") 
+
+    def collect_social_network_data(self, username: str) -> Dict:
+        """
+        Collect social network and collaboration data.
+        
+        Args:
+            username (str): GitHub username to analyze
+            
+        Returns:
+            Dict: Social network analysis data
+        """
+        if not username:
+            raise ValueError("username cannot be empty")
+        
+        try:
+            user = self.github.get_user(username)
+            social_data = {
+                'followers_list': [],
+                'following_list': [],
+                'mutual_connections': [],
+                'follower_to_following_ratio': 0,
+                'social_influence_score': 0,
+                'collaboration_network': [],
+                'mentorship_indicators': {},
+                'cross_org_collaborations': []
+            }
+            
+            # Get followers and following (limited to avoid rate limits)
+            try:
+                followers = list(user.get_followers()[:50])  # Limit to 50
+                social_data['followers_list'] = [
+                    {
+                        'login': follower.login,
+                        'followers': follower.followers,
+                        'public_repos': follower.public_repos,
+                        'created_at': follower.created_at
+                    } for follower in followers
+                ]
+                
+                following = list(user.get_following()[:50])  # Limit to 50
+                social_data['following_list'] = [
+                    {
+                        'login': follow.login,
+                        'followers': follow.followers,
+                        'public_repos': follow.public_repos,
+                        'created_at': follow.created_at
+                    } for follow in following
+                ]
+                
+                # Calculate mutual connections
+                follower_logins = set(f.login for f in followers)
+                following_logins = set(f.login for f in following)
+                mutual = follower_logins.intersection(following_logins)
+                social_data['mutual_connections'] = list(mutual)
+                
+                # Calculate ratios
+                if user.following > 0:
+                    social_data['follower_to_following_ratio'] = user.followers / user.following
+                
+                # Social influence score (simple heuristic)
+                social_data['social_influence_score'] = (
+                    user.followers * 0.6 + 
+                    user.public_repos * 0.3 + 
+                    len(mutual) * 0.1
+                )
+                
+            except GithubException as e:
+                logging.warning(f"Error fetching social network for {username}: {e}")
+            
+            return social_data
+            
+        except GithubException as e:
+            logging.error(f"Error collecting social network data for {username}: {e}")
+            return {}
+    
+    def analyze_repository_portfolio(self, username: str) -> Dict:
+        """
+        Analyze user's repository portfolio in detail.
+        
+        Args:
+            username (str): GitHub username to analyze
+            
+        Returns:
+            Dict: Repository portfolio analysis
+        """
+        if not username:
+            raise ValueError("username cannot be empty")
+        
+        try:
+            user = self.github.get_user(username)
+            repos = list(user.get_repos())
+            
+            portfolio_data = {
+                'total_repositories': len(repos),
+                'original_repos': 0,
+                'forked_repos': 0,
+                'language_distribution': {},
+                'repository_sizes': [],
+                'license_preferences': {},
+                'topics_used': {},
+                'repo_creation_pattern': {},
+                'readme_analysis': {},
+                'collaboration_repos': [],
+                'maintenance_patterns': {},
+                'repository_maturity': []
+            }
+            
+            total_size = 0
+            languages_bytes = {}
+            license_counts = {}
+            topics_counts = {}
+            creation_years = {}
+            readme_lengths = []
+            collaborative_repos = []
+            
+            for repo in repos[:20]:  # Limit to avoid rate limits
+                try:
+                    if repo.fork:
+                        portfolio_data['forked_repos'] += 1
+                    else:
+                        portfolio_data['original_repos'] += 1
+                    
+                    # Repository size
+                    if repo.size:
+                        total_size += repo.size
+                        portfolio_data['repository_sizes'].append({
+                            'name': repo.name,
+                            'size_kb': repo.size,
+                            'stars': repo.stargazers_count,
+                            'forks': repo.forks_count
+                        })
+                    
+                    # Languages
+                    try:
+                        languages = repo.get_languages()
+                        for lang, bytes_count in languages.items():
+                            languages_bytes[lang] = languages_bytes.get(lang, 0) + bytes_count
+                    except:
+                        pass
+                    
+                    # License analysis
+                    if repo.license:
+                        license_name = repo.license.name
+                        license_counts[license_name] = license_counts.get(license_name, 0) + 1
+                    
+                    # Topics
+                    topics = repo.get_topics()
+                    for topic in topics:
+                        topics_counts[topic] = topics_counts.get(topic, 0) + 1
+                    
+                    # Creation pattern
+                    year = repo.created_at.year
+                    creation_years[year] = creation_years.get(year, 0) + 1
+                    
+                    # README analysis
+                    try:
+                        readme = repo.get_readme()
+                        readme_content = readme.decoded_content.decode('utf-8')
+                        readme_lengths.append({
+                            'repo': repo.name,
+                            'readme_length': len(readme_content),
+                            'has_badges': '[![' in readme_content or '![' in readme_content,
+                            'has_sections': '##' in readme_content or '#' in readme_content
+                        })
+                    except:
+                        readme_lengths.append({
+                            'repo': repo.name,
+                            'readme_length': 0,
+                            'has_badges': False,
+                            'has_sections': False
+                        })
+                    
+                    # Collaboration indicators
+                    if repo.forks_count > 0 or repo.stargazers_count > 5:
+                        collaborative_repos.append({
+                            'name': repo.name,
+                            'forks': repo.forks_count,
+                            'stars': repo.stargazers_count,
+                            'watchers': repo.watchers_count,
+                            'contributors_count': repo.get_contributors().totalCount if hasattr(repo.get_contributors(), 'totalCount') else 0
+                        })
+                    
+                    # Repository maturity
+                    days_old = (datetime.now() - repo.created_at.replace(tzinfo=None)).days
+                    last_push_days = (datetime.now() - repo.pushed_at.replace(tzinfo=None)).days if repo.pushed_at else 9999
+                    
+                    portfolio_data['repository_maturity'].append({
+                        'name': repo.name,
+                        'age_days': days_old,
+                        'days_since_last_push': last_push_days,
+                        'commits_count': repo.get_commits().totalCount if hasattr(repo.get_commits(), 'totalCount') else 0,
+                        'is_maintained': last_push_days < 30
+                    })
+                    
+                except Exception as e:
+                    logging.warning(f"Error analyzing repo {repo.name}: {e}")
+                    continue
+            
+            # Process collected data
+            total_bytes = sum(languages_bytes.values())
+            if total_bytes > 0:
+                portfolio_data['language_distribution'] = {
+                    lang: (bytes_count / total_bytes) * 100 
+                    for lang, bytes_count in languages_bytes.items()
+                }
+            
+            portfolio_data['license_preferences'] = license_counts
+            portfolio_data['topics_used'] = topics_counts
+            portfolio_data['repo_creation_pattern'] = creation_years
+            portfolio_data['collaboration_repos'] = collaborative_repos
+            portfolio_data['readme_analysis'] = {
+                'avg_readme_length': sum(r['readme_length'] for r in readme_lengths) / len(readme_lengths) if readme_lengths else 0,
+                'repos_with_badges': sum(1 for r in readme_lengths if r['has_badges']),
+                'repos_with_sections': sum(1 for r in readme_lengths if r['has_sections']),
+                'documentation_score': len([r for r in readme_lengths if r['readme_length'] > 500]) / len(readme_lengths) if readme_lengths else 0
+            }
+            
+            # Maintenance patterns
+            maintained_repos = [r for r in portfolio_data['repository_maturity'] if r['is_maintained']]
+            portfolio_data['maintenance_patterns'] = {
+                'maintained_repos_count': len(maintained_repos),
+                'maintenance_ratio': len(maintained_repos) / len(portfolio_data['repository_maturity']) if portfolio_data['repository_maturity'] else 0,
+                'avg_repo_age_days': sum(r['age_days'] for r in portfolio_data['repository_maturity']) / len(portfolio_data['repository_maturity']) if portfolio_data['repository_maturity'] else 0
+            }
+            
+            return portfolio_data
+            
+        except GithubException as e:
+            logging.error(f"Error analyzing repository portfolio for {username}: {e}")
+            return {}
+    
+    def analyze_contribution_quality(self, username: str) -> Dict:
+        """
+        Analyze the quality and patterns of user contributions.
+        
+        Args:
+            username (str): GitHub username to analyze
+            
+        Returns:
+            Dict: Contribution quality analysis
+        """
+        if not username:
+            raise ValueError("username cannot be empty")
+        
+        try:
+            user = self.github.get_user(username)
+            repos = list(user.get_repos())
+            
+            quality_data = {
+                'commit_message_analysis': {},
+                'pull_request_patterns': {},
+                'issue_management': {},
+                'code_review_participation': {},
+                'documentation_contributions': {},
+                'testing_patterns': {},
+                'ci_cd_adoption': {}
+            }
+            
+            commit_messages = []
+            pr_data = []
+            issue_data = []
+            doc_contributions = 0
+            test_contributions = 0
+            ci_files = 0
+            
+            for repo in repos[:10]:  # Limit to avoid rate limits
+                try:
+                    if repo.fork:
+                        continue
+                    
+                    # Analyze commits
+                    commits = list(repo.get_commits(author=username)[:20])
+                    for commit in commits:
+                        message = commit.commit.message
+                        commit_messages.append({
+                            'message': message,
+                            'length': len(message),
+                            'has_type': any(prefix in message.lower() for prefix in ['feat:', 'fix:', 'docs:', 'style:', 'refactor:', 'test:', 'chore:']),
+                            'lines_count': len(message.split('\n')),
+                            'repo': repo.name
+                        })
+                    
+                    # Analyze pull requests
+                    try:
+                        prs = list(repo.get_pulls(creator=username, state='all')[:10])
+                        for pr in prs:
+                            pr_data.append({
+                                'state': pr.state,
+                                'merged': pr.merged,
+                                'comments': pr.comments,
+                                'review_comments': pr.review_comments,
+                                'commits': pr.commits,
+                                'additions': pr.additions,
+                                'deletions': pr.deletions,
+                                'changed_files': pr.changed_files,
+                                'repo': repo.name
+                            })
+                    except:
+                        pass
+                    
+                    # Analyze issues
+                    try:
+                        issues = list(repo.get_issues(creator=username, state='all')[:10])
+                        for issue in issues:
+                            issue_data.append({
+                                'state': issue.state,
+                                'comments': issue.comments,
+                                'labels_count': len(issue.labels),
+                                'body_length': len(issue.body) if issue.body else 0,
+                                'repo': repo.name
+                            })
+                    except:
+                        pass
+                    
+                    # Check for documentation files
+                    try:
+                        contents = repo.get_contents("")
+                        for content in contents:
+                            if content.type == "file":
+                                filename = content.name.lower()
+                                if any(doc_pattern in filename for doc_pattern in ['readme', 'doc', 'wiki', 'guide', 'tutorial']):
+                                    doc_contributions += 1
+                                elif any(test_pattern in filename for test_pattern in ['test', 'spec']):
+                                    test_contributions += 1
+                                elif filename in ['.github/workflows', '.travis.yml', '.circleci', 'jenkinsfile', '.gitlab-ci.yml']:
+                                    ci_files += 1
+                    except:
+                        pass
+                    
+                except Exception as e:
+                    logging.warning(f"Error analyzing contributions in {repo.name}: {e}")
+                    continue
+            
+            # Process commit message analysis
+            if commit_messages:
+                quality_data['commit_message_analysis'] = {
+                    'total_commits': len(commit_messages),
+                    'avg_message_length': sum(c['length'] for c in commit_messages) / len(commit_messages),
+                    'conventional_commits_ratio': sum(1 for c in commit_messages if c['has_type']) / len(commit_messages),
+                    'multiline_commits_ratio': sum(1 for c in commit_messages if c['lines_count'] > 1) / len(commit_messages)
+                }
+            
+            # Process PR patterns
+            if pr_data:
+                merged_prs = [pr for pr in pr_data if pr['merged']]
+                quality_data['pull_request_patterns'] = {
+                    'total_prs': len(pr_data),
+                    'merge_rate': len(merged_prs) / len(pr_data),
+                    'avg_comments_per_pr': sum(pr['comments'] for pr in pr_data) / len(pr_data),
+                    'avg_changes_per_pr': sum(pr['additions'] + pr['deletions'] for pr in pr_data) / len(pr_data),
+                    'avg_files_per_pr': sum(pr['changed_files'] for pr in pr_data) / len(pr_data)
+                }
+            
+            # Process issue management
+            if issue_data:
+                closed_issues = [issue for issue in issue_data if issue['state'] == 'closed']
+                quality_data['issue_management'] = {
+                    'total_issues': len(issue_data),
+                    'closure_rate': len(closed_issues) / len(issue_data),
+                    'avg_labels_per_issue': sum(issue['labels_count'] for issue in issue_data) / len(issue_data),
+                    'avg_issue_description_length': sum(issue['body_length'] for issue in issue_data) / len(issue_data)
+                }
+            
+            # Documentation and testing
+            quality_data['documentation_contributions'] = {
+                'doc_files_count': doc_contributions,
+                'documentation_ratio': doc_contributions / len(repos) if repos else 0
+            }
+            
+            quality_data['testing_patterns'] = {
+                'test_files_count': test_contributions,
+                'testing_ratio': test_contributions / len(repos) if repos else 0
+            }
+            
+            quality_data['ci_cd_adoption'] = {
+                'ci_files_count': ci_files,
+                'ci_adoption_ratio': ci_files / len(repos) if repos else 0
+            }
+            
+            return quality_data
+            
+        except GithubException as e:
+            logging.error(f"Error analyzing contribution quality for {username}: {e}")
+            return {} 
