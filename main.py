@@ -12,12 +12,327 @@ import numpy as np
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 import threading
+import argparse
+import sys
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Global GitHub token
-GITHUB_TOKEN = "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"
+# Global GitHub token (can be set via GUI or environment variable)
+GITHUB_TOKEN = ""
+
+class AutoProfileDiscovery:
+    def __init__(self, github_token: str = None):
+        self.token = github_token or GITHUB_TOKEN
+        if not self.token:
+            raise ValueError("GitHub token is required")
+        self.github = Github(self.token)
+        self.headers = {'Authorization': f'token {self.token}'}
+    
+    def discover_trending_developers(self, language: str = None, location: str = None, limit: int = 50):
+        """Discover developers from trending repositories."""
+        try:
+            discovered_users = set()
+            
+            # Search for trending repositories
+            query_parts = []
+            if language:
+                query_parts.append(f"language:{language}")
+            
+            # Add date filter for recent activity (last 30 days)
+            recent_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            query_parts.append(f"pushed:>{recent_date}")
+            
+            query = " ".join(query_parts) if query_parts else "stars:>100"
+            
+            print(f"Searching trending repositories with query: {query}")
+            
+            # Get trending repositories
+            repos = self.github.search_repositories(query, sort="stars", order="desc")
+            
+            processed_repos = 0
+            for repo in repos:
+                if len(discovered_users) >= limit:
+                    break
+                
+                try:
+                    # Get repository owner
+                    if repo.owner and repo.owner.type == "User":
+                        if location:
+                            user = self.github.get_user(repo.owner.login)
+                            if user.location and location.lower() in user.location.lower():
+                                discovered_users.add(repo.owner.login)
+                        else:
+                            discovered_users.add(repo.owner.login)
+                    
+                    # Get top contributors
+                    try:
+                        contributors = repo.get_contributors()
+                        for contributor in list(contributors)[:5]:  # Top 5 contributors
+                            if len(discovered_users) >= limit:
+                                break
+                            
+                            if contributor.type == "User":
+                                if location:
+                                    try:
+                                        user = self.github.get_user(contributor.login)
+                                        if user.location and location.lower() in user.location.lower():
+                                            discovered_users.add(contributor.login)
+                                    except:
+                                        pass
+                                else:
+                                    discovered_users.add(contributor.login)
+                    except:
+                        pass
+                    
+                    processed_repos += 1
+                    if processed_repos >= 20:  # Limit API calls
+                        break
+                        
+                except Exception as e:
+                    print(f"Error processing repo {repo.full_name}: {e}")
+                    continue
+            
+            print(f"Discovered {len(discovered_users)} developers from trending repositories")
+            return list(discovered_users)[:limit]
+            
+        except Exception as e:
+            print(f"Error discovering trending developers: {e}")
+            return []
+    
+    def discover_by_search_criteria(self, criteria: dict, limit: int = 50):
+        """Discover users based on search criteria."""
+        try:
+            query_parts = []
+            
+            # Build search query
+            if criteria.get('language'):
+                query_parts.append(f"language:{criteria['language']}")
+            
+            if criteria.get('location'):
+                query_parts.append(f"location:{criteria['location']}")
+            
+            if criteria.get('min_followers'):
+                query_parts.append(f"followers:>={criteria['min_followers']}")
+            
+            if criteria.get('min_repos'):
+                query_parts.append(f"repos:>={criteria['min_repos']}")
+            
+            if criteria.get('company'):
+                query_parts.append(f"company:{criteria['company']}")
+            
+            # Add type:user to search for users specifically
+            query_parts.append("type:user")
+            
+            query = " ".join(query_parts)
+            print(f"Searching users with query: {query}")
+            
+            users = self.github.search_users(query)
+            discovered_users = []
+            
+            for user in users:
+                if len(discovered_users) >= limit:
+                    break
+                discovered_users.append(user.login)
+            
+            print(f"Discovered {len(discovered_users)} users from search criteria")
+            return discovered_users
+            
+        except Exception as e:
+            print(f"Error discovering users by search: {e}")
+            return []
+    
+    def discover_from_popular_repos(self, topics: list = None, limit: int = 50):
+        """Discover developers from popular repositories in specific topics."""
+        try:
+            discovered_users = set()
+            
+            if not topics:
+                topics = ['machine-learning', 'web-development', 'mobile', 'data-science', 
+                         'artificial-intelligence', 'blockchain', 'devops', 'frontend', 'backend']
+            
+            for topic in topics:
+                if len(discovered_users) >= limit:
+                    break
+                
+                try:
+                    # Search for repositories with specific topics
+                    query = f"topic:{topic} stars:>100"
+                    repos = self.github.search_repositories(query, sort="stars", order="desc")
+                    
+                    processed = 0
+                    for repo in repos:
+                        if len(discovered_users) >= limit or processed >= 10:
+                            break
+                        
+                        try:
+                            # Add repository owner
+                            if repo.owner and repo.owner.type == "User":
+                                discovered_users.add(repo.owner.login)
+                            
+                            # Add top contributors
+                            contributors = repo.get_contributors()
+                            for contributor in list(contributors)[:3]:
+                                if len(discovered_users) >= limit:
+                                    break
+                                if contributor.type == "User":
+                                    discovered_users.add(contributor.login)
+                            
+                            processed += 1
+                            
+                        except Exception as e:
+                            continue
+                            
+                except Exception as e:
+                    print(f"Error processing topic {topic}: {e}")
+                    continue
+            
+            print(f"Discovered {len(discovered_users)} developers from popular repositories")
+            return list(discovered_users)[:limit]
+            
+        except Exception as e:
+            print(f"Error discovering from popular repos: {e}")
+            return []
+    
+    def discover_active_developers(self, days_back: int = 7, limit: int = 50):
+        """Discover recently active developers."""
+        try:
+            discovered_users = set()
+            
+            # Search for recently updated repositories
+            recent_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+            
+            query = f"pushed:>{recent_date} stars:>10"
+            repos = self.github.search_repositories(query, sort="updated", order="desc")
+            
+            processed = 0
+            for repo in repos:
+                if len(discovered_users) >= limit or processed >= 30:
+                    break
+                
+                try:
+                    # Add repository owner if recently active
+                    if repo.owner and repo.owner.type == "User":
+                        discovered_users.add(repo.owner.login)
+                    
+                    # Get recent commits to find active contributors
+                    commits = repo.get_commits(since=datetime.now() - timedelta(days=days_back))
+                    for commit in list(commits)[:5]:
+                        if len(discovered_users) >= limit:
+                            break
+                        if commit.author and commit.author.type == "User":
+                            discovered_users.add(commit.author.login)
+                    
+                    processed += 1
+                    
+                except Exception as e:
+                    continue
+            
+            print(f"Discovered {len(discovered_users)} recently active developers")
+            return list(discovered_users)[:limit]
+            
+        except Exception as e:
+            print(f"Error discovering active developers: {e}")
+            return []
+    
+    def discover_by_organization(self, org_names: list, limit: int = 50):
+        """Discover developers from specific organizations."""
+        try:
+            discovered_users = set()
+            
+            for org_name in org_names:
+                if len(discovered_users) >= limit:
+                    break
+                
+                try:
+                    org = self.github.get_organization(org_name)
+                    members = org.get_members()
+                    
+                    for member in members:
+                        if len(discovered_users) >= limit:
+                            break
+                        discovered_users.add(member.login)
+                        
+                except Exception as e:
+                    print(f"Error processing organization {org_name}: {e}")
+                    continue
+            
+            print(f"Discovered {len(discovered_users)} developers from organizations")
+            return list(discovered_users)[:limit]
+            
+        except Exception as e:
+            print(f"Error discovering from organizations: {e}")
+            return []
+    
+    def discover_comprehensive(self, preferences: dict = None, total_limit: int = 100):
+        """Comprehensive discovery using multiple methods."""
+        if not preferences:
+            preferences = {
+                'languages': ['python', 'javascript', 'java', 'go', 'rust'],
+                'topics': ['machine-learning', 'web-development', 'mobile'],
+                'min_followers': 50,
+                'include_trending': True,
+                'include_active': True,
+                'days_back': 7
+            }
+        
+        all_discovered = set()
+        per_method_limit = total_limit // 4  # Divide among methods
+        
+        try:
+            # Method 1: Trending developers
+            if preferences.get('include_trending', True):
+                for lang in preferences.get('languages', ['python'])[:2]:
+                    trending = self.discover_trending_developers(
+                        language=lang, 
+                        limit=per_method_limit // 2
+                    )
+                    all_discovered.update(trending)
+                    if len(all_discovered) >= total_limit:
+                        break
+            
+            # Method 2: Search-based discovery
+            if len(all_discovered) < total_limit:
+                search_criteria = {
+                    'min_followers': preferences.get('min_followers', 50),
+                    'min_repos': preferences.get('min_repos', 5)
+                }
+                
+                for lang in preferences.get('languages', ['python'])[:2]:
+                    search_criteria['language'] = lang
+                    search_users = self.discover_by_search_criteria(
+                        search_criteria, 
+                        limit=per_method_limit // 2
+                    )
+                    all_discovered.update(search_users)
+                    if len(all_discovered) >= total_limit:
+                        break
+            
+            # Method 3: Popular repositories
+            if len(all_discovered) < total_limit:
+                popular = self.discover_from_popular_repos(
+                    topics=preferences.get('topics'),
+                    limit=per_method_limit
+                )
+                all_discovered.update(popular)
+            
+            # Method 4: Recently active developers
+            if len(all_discovered) < total_limit and preferences.get('include_active', True):
+                active = self.discover_active_developers(
+                    days_back=preferences.get('days_back', 7),
+                    limit=per_method_limit
+                )
+                all_discovered.update(active)
+            
+            final_list = list(all_discovered)[:total_limit]
+            print(f"Comprehensive discovery completed: {len(final_list)} unique developers found")
+            
+            return final_list
+            
+        except Exception as e:
+            print(f"Error in comprehensive discovery: {e}")
+            return list(all_discovered)[:total_limit]
 
 class AdvancedGitHubMiner:
     def __init__(self, github_token: str = None, progress_callback=None, stop_event=None):
@@ -756,17 +1071,32 @@ class AdvancedGitHubMiner:
                 return {}
             
             user = self.github.get_user(username)
-            repos = list(user.get_repos())
+            all_repos = list(user.get_repos())
             
             # Filter out forks
-            original_repos = [repo for repo in repos if not repo.fork]
+            original_repos = [repo for repo in all_repos if not repo.fork]
+            
+            if not original_repos:
+                return {
+                    'by_stars': [],
+                    'by_forks': [],
+                    'by_size': [],
+                    'by_watchers': [],
+                    'by_recent_activity': [],
+                    'total_original_repos': 0,
+                    'total_stars_earned': 0,
+                    'total_forks_earned': 0
+                }
+            
+            # Adjust limit based on available repositories
+            actual_limit = min(limit, len(original_repos))
             
             # Sort by different metrics
-            by_stars = sorted(original_repos, key=lambda r: r.stargazers_count, reverse=True)[:limit]
-            by_forks = sorted(original_repos, key=lambda r: r.forks_count, reverse=True)[:limit]
-            by_size = sorted(original_repos, key=lambda r: r.size, reverse=True)[:limit]
-            by_watchers = sorted(original_repos, key=lambda r: r.watchers_count, reverse=True)[:limit]
-            by_recent = sorted(original_repos, key=lambda r: r.updated_at, reverse=True)[:limit]
+            by_stars = sorted(original_repos, key=lambda r: r.stargazers_count, reverse=True)[:actual_limit]
+            by_forks = sorted(original_repos, key=lambda r: r.forks_count, reverse=True)[:actual_limit]
+            by_size = sorted(original_repos, key=lambda r: r.size, reverse=True)[:actual_limit]
+            by_watchers = sorted(original_repos, key=lambda r: r.watchers_count, reverse=True)[:actual_limit]
+            by_recent = sorted(original_repos, key=lambda r: r.updated_at, reverse=True)[:actual_limit]
             
             def repo_info(repo):
                 return {
@@ -1047,149 +1377,170 @@ class AdvancedGitHubMiner:
         ml_features = []
         for user_data in dataset:
             if not user_data:
-                logging.warning("Skipping empty user_data")
                 continue
             
-            logging.info(f"Processing user: {user_data.get('username', 'Unknown')}")
-            
-            # Handle timezone-aware datetime from GitHub API
-            created_at = user_data.get('created_at', datetime.now())
-            if hasattr(created_at, 'tzinfo') and created_at.tzinfo is not None:
-                created_at = created_at.replace(tzinfo=None)
-            
+            # Basic user features
             features = {
                 'username': user_data.get('username'),
+                'name': user_data.get('name'),
                 'followers': user_data.get('followers', 0),
                 'following': user_data.get('following', 0),
                 'public_repos': user_data.get('public_repos', 0),
-                'account_age_days': (datetime.now() - created_at).days,
-                'public_gists': user_data.get('extended_user_data', {}).get('public_gists', 0),
-                'org_count': len(user_data.get('extended_user_data', {}).get('organizations', [])),
-                'starred_repo_count': len(user_data.get('extended_user_data', {}).get('starred_repos', [])),
-                'watched_repo_count': len(user_data.get('extended_user_data', {}).get('watched_repos', [])),
-                'event_count': len(user_data.get('extended_user_data', {}).get('events', []))
+                'account_age_days': 0,  # Initialize with 0
+                'mined_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             
+            # Safely calculate account age
+            try:
+                created_at = user_data.get('created_at')
+                if created_at:
+                    # Convert string to datetime if needed
+                    if isinstance(created_at, str):
+                        created_at = datetime.strptime(created_at, '%Y-%m-%dT%H:%M:%SZ')
+                    
+                    # Convert to naive datetime
+                    if created_at.tzinfo:
+                        created_at = created_at.replace(tzinfo=None)
+                    
+                    # Get current time as naive datetime
+                    current_time = datetime.now()
+                    
+                    # Calculate age
+                    features['account_age_days'] = (current_time - created_at).days
+            except Exception as e:
+                logging.warning(f"Error calculating account age: {e}")
+                features['account_age_days'] = 0
+            
+            # Extended user data
+            extended_data = user_data.get('extended_user_data', {})
+            features.update({
+                'email': extended_data.get('email'),
+                'location': extended_data.get('location'),
+                'bio': extended_data.get('bio'),
+                'company': extended_data.get('company'),
+                'blog': extended_data.get('blog'),
+                'twitter_username': extended_data.get('twitter_username'),
+                'hireable': extended_data.get('hireable'),
+                'public_gists': extended_data.get('public_gists', 0),
+                'avatar_url': extended_data.get('avatar_url'),
+                'starred_repo_count': len(extended_data.get('starred_repos', [])),
+                'watched_repo_count': len(extended_data.get('watched_repos', [])),
+                'gist_count': len(extended_data.get('gists', [])),
+                'organization_count': len(extended_data.get('organizations', [])),
+                'event_count': len(extended_data.get('events', []))
+            })
+            
+            # Development patterns
             patterns = user_data.get('development_patterns', {})
             if patterns:
                 features.update({
                     'total_commits': len(patterns.get('commit_frequency', [])),
                     'avg_commits_per_repo': np.mean([r.get('total_commits', 0) for r in patterns.get('repository_lifecycle', [])]) if patterns.get('repository_lifecycle') else 0,
                     'max_productivity_streak': patterns.get('productivity_streaks', {}).get('max_streak', 0),
+                    'total_active_days': patterns.get('productivity_streaks', {}).get('total_active_days', 0),
                     'languages_used': len(patterns.get('language_evolution', {})),
                     'commit_comments_count': len(patterns.get('commit_comments', [])),
                     'issue_comments_count': len(patterns.get('issue_comments', [])),
                     'pr_reviews_count': len(patterns.get('pr_reviews', []))
                 })
+                
+                # Add language evolution data
+                for lang, data in patterns.get('language_evolution', {}).items():
+                    features[f'language_{lang}_bytes'] = sum(item.get('bytes', 0) for item in data)
+                    features[f'language_{lang}_repos'] = len(data)
             
-            # Add commit activity features
-            commit_activity = user_data.get('commit_activity', {})
-            if commit_activity:
-                features.update({
-                    'recent_commits_count': commit_activity.get('total_recent_commits', 0),
-                    'recent_active_days': len(commit_activity.get('active_days', [])),
-                    'avg_commits_per_active_day': commit_activity.get('avg_commits_per_day', 0),
-                    'most_active_hour': max(commit_activity.get('commit_frequency_by_hour', {}).items(), key=lambda x: x[1])[0] if commit_activity.get('commit_frequency_by_hour') else 0,
-                    'repositories_analyzed': commit_activity.get('repositories_analyzed', 0),
-                    'total_original_repositories': commit_activity.get('total_repositories', 0)
-                })
-            
-            # Add contribution activity features
-            contribution_activity = user_data.get('contribution_activity', {})
-            if contribution_activity:
-                features.update({
-                    'contribution_level': contribution_activity.get('contribution_level', 'Unknown'),
-                    'recent_contributions_30_days': contribution_activity.get('recent_contributions_30_days', 0),
-                    'activity_score': contribution_activity.get('activity_score', 0),
-                    'repositories_contributed_to': contribution_activity.get('repositories_contributed_to', 0),
-                    'issues_opened': contribution_activity.get('issues_opened', 0),
-                    'issues_closed': contribution_activity.get('issues_closed', 0),
-                    'pull_requests_opened': contribution_activity.get('pull_requests_opened', 0),
-                    'pull_requests_merged': contribution_activity.get('pull_requests_merged', 0),
-                    'recently_active_repositories': contribution_activity.get('recently_active_repositories', 0),
-                    'contribution_total_stars': contribution_activity.get('total_stars_earned', 0),
-                    'contribution_total_forks': contribution_activity.get('total_forks_earned', 0),
-                    'event_types_count': len(contribution_activity.get('event_types', {}))
-                })
-            
-            # Add language features
-            language_data = user_data.get('language_percentages', {})
-            if language_data:
-                features.update({
-                    'total_languages_used': language_data.get('total_languages', 0),
-                    'primary_language': language_data.get('primary_language', ''),
-                    'language_diversity': language_data.get('language_diversity_score', 0),
-                    'top_language_percentage': list(language_data.get('language_percentages', {}).values())[0] if language_data.get('language_percentages') else 0
-                })
-            
-            # Add top repositories features
-            top_repos = user_data.get('top_repositories', {})
-            if top_repos:
-                features.update({
-                    'total_original_repos': top_repos.get('total_original_repos', 0),
-                    'total_stars_earned': top_repos.get('total_stars_earned', 0),
-                    'total_forks_earned': top_repos.get('total_forks_earned', 0),
-                    'avg_stars_per_repo': top_repos.get('total_stars_earned', 0) / max(top_repos.get('total_original_repos', 1), 1),
-                    'most_starred_repo_stars': top_repos.get('by_stars', [{}])[0].get('stars', 0) if top_repos.get('by_stars') else 0
-                })
-            
-            # Add interests features
-            interests = user_data.get('interests', {})
-            if interests:
-                features.update({
-                    'repository_topics_count': len(interests.get('repository_topics', {})),
-                    'inferred_interests_count': len(interests.get('inferred_interests', [])),
-                    'starred_topics_count': len(interests.get('starred_repo_topics', {})),
-                    'organization_count': len(interests.get('organization_domains', []))
-                })
-            
+            # Repository data
             repos = user_data.get('repositories', [])
             if repos:
-                # Use numpy with nan handling for empty arrays
-                repo_stars = [r.get('stars', 0) for r in repos]
-                repo_forks = [r.get('forks', 0) for r in repos]
-                repo_sizes = [r.get('size', 0) for r in repos]
-                
                 features.update({
-                    'avg_repo_stars': np.mean(repo_stars) if repo_stars else 0,
-                    'avg_repo_forks': np.mean(repo_forks) if repo_forks else 0,
-                    'avg_repo_size': np.mean(repo_sizes) if repo_sizes else 0,
+                    'total_repos_analyzed': len(repos),
+                    'avg_repo_stars': np.mean([r.get('stars', 0) for r in repos]),
+                    'avg_repo_forks': np.mean([r.get('forks', 0) for r in repos]),
+                    'avg_repo_size': np.mean([r.get('size', 0) for r in repos]),
                     'total_contributors': sum(len(r.get('contributor_network', {}).get('contributors', [])) for r in repos),
-                    'avg_branches': np.mean([len(r.get('extended_repo_data', {}).get('branches', [])) for r in repos]) if repos else 0,
-                    'avg_releases': np.mean([len(r.get('extended_repo_data', {}).get('releases', [])) for r in repos]) if repos else 0,
-                    'avg_issues': np.mean([len(r.get('issues', [])) for r in repos]) if repos else 0,
-                    'avg_resolution_time': np.mean([issue.get('resolution_time_hours', 0) for r in repos for issue in r.get('issues', []) if issue.get('resolution_time_hours')]) if any(r.get('issues', []) for r in repos) else 0
+                    'avg_branches': np.mean([len(r.get('extended_repo_data', {}).get('branches', [])) for r in repos]),
+                    'avg_releases': np.mean([len(r.get('extended_repo_data', {}).get('releases', [])) for r in repos]),
+                    'avg_tags': np.mean([len(r.get('extended_repo_data', {}).get('tags', [])) for r in repos]),
+                    'avg_issues': np.mean([len(r.get('issues', [])) for r in repos]),
+                    'avg_resolution_time': np.mean([issue.get('resolution_time_hours', 0) for r in repos for issue in r.get('issues', []) if issue.get('resolution_time_hours')])
                 })
+                
+                # Add repository complexity metrics
+                complexity_metrics = {
+                    'avg_lines_of_code': 0,
+                    'avg_comment_ratio': 0,
+                    'avg_function_count': 0,
+                    'avg_class_count': 0,
+                    'avg_file_count': 0
+                }
+                
+                for repo in repos:
+                    complexity = repo.get('complexity', {})
+                    if complexity:
+                        complexity_metrics['avg_lines_of_code'] += complexity.get('lines_of_code', 0)
+                        complexity_metrics['avg_comment_ratio'] += complexity.get('comment_ratio', 0)
+                        complexity_metrics['avg_function_count'] += complexity.get('function_count', 0)
+                        complexity_metrics['avg_class_count'] += complexity.get('class_count', 0)
+                        complexity_metrics['avg_file_count'] += complexity.get('file_count', 0)
+                
+                if len(repos) > 0:
+                    for key in complexity_metrics:
+                        complexity_metrics[key] /= len(repos)
+                
+                features.update(complexity_metrics)
+                
+                # Add repository-specific data
+                for i, repo in enumerate(repos):
+                    repo_name = repo.get('name', f'repo_{i}')
+                    features.update({
+                        f'{repo_name}_stars': repo.get('stars', 0),
+                        f'{repo_name}_forks': repo.get('forks', 0),
+                        f'{repo_name}_size': repo.get('size', 0),
+                        f'{repo_name}_language': repo.get('language'),
+                        f'{repo_name}_contributors': len(repo.get('contributor_network', {}).get('contributors', [])),
+                        f'{repo_name}_issues': len(repo.get('issues', [])),
+                        f'{repo_name}_branches': len(repo.get('extended_repo_data', {}).get('branches', [])),
+                        f'{repo_name}_releases': len(repo.get('extended_repo_data', {}).get('releases', [])),
+                        f'{repo_name}_tags': len(repo.get('extended_repo_data', {}).get('tags', []))
+                    })
             
-            logging.info(f"Features extracted for {user_data.get('username')}: {len(features)} features")
             ml_features.append(features)
         
-        if not ml_features:
-            logging.error("No features extracted from dataset")
-            raise ValueError("No valid features could be extracted from the dataset")
-        
-        logging.info(f"Creating DataFrame with {len(ml_features)} rows and {len(ml_features[0])} columns")
+        # Convert to DataFrame and handle any non-serializable values
         df = pd.DataFrame(ml_features)
+        for col in df.columns:
+            df[col] = df[col].apply(lambda x: str(x) if isinstance(x, (dict, list)) else x)
         
-        # Export CSV
-        csv_filename = f"{filename}_ml_features.csv"
-        df.to_csv(csv_filename, index=False)
-        logging.info(f"CSV file saved: {csv_filename} ({len(df)} rows, {len(df.columns)} columns)")
+        # Append to CSV file
+        csv_file = "github_data_ml_features.csv"
+        if os.path.exists(csv_file):
+            df.to_csv(csv_file, mode='a', header=False, index=False)
+        else:
+            df.to_csv(csv_file, index=False)
         
-        # Export JSON
-        json_filename = f"{filename}_raw.json"
-        with open(json_filename, 'w') as f:
-            json.dump(dataset, f, indent=2, default=str)
-        logging.info(f"JSON file saved: {json_filename}")
+        # Append to JSON file
+        json_file = "github_data_raw.json"
+        if os.path.exists(json_file):
+            with open(json_file, 'r') as f:
+                try:
+                    existing_data = json.load(f)
+                except json.JSONDecodeError:
+                    existing_data = []
+        else:
+            existing_data = []
         
-        # Print summary
-        print(f"Export Summary:")
-        print(f"- CSV file: {csv_filename} ({len(df)} rows, {len(df.columns)} columns)")
-        print(f"- JSON file: {json_filename}")
-        print(f"- Features per user: {len(ml_features[0])}")
+        # Convert datetime objects to strings before JSON serialization
+        def datetime_handler(obj):
+            if isinstance(obj, datetime):
+                return obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
         
-        logging.info(f"ML-ready dataset exported: {csv_filename}")
-        logging.info(f"Raw dataset exported: {json_filename}")
+        existing_data.extend(dataset)
+        
+        with open(json_file, 'w') as f:
+            json.dump(existing_data, f, indent=2, default=datetime_handler)
+        
+        print(f"Data appended to: {csv_file} and {json_file}")
     
     def convert_json_to_csv(self, json_file_path: str, output_csv_path: str = None) -> str:
         """Convert a JSON file containing GitHub user data to CSV format."""
@@ -1216,6 +1567,173 @@ class AdvancedGitHubMiner:
         except Exception as e:
             logging.error(f"Error converting JSON to CSV: {e}")
             raise
+    
+    def mine_repository_contributors(self, repo_url: str) -> List[Dict]:
+        """Mine data for all contributors of a repository."""
+        if not repo_url:
+            raise ValueError("Repository URL cannot be empty")
+            
+        # Extract owner and repo name from URL
+        pattern = r'github\.com/([^/]+)/([^/]+)'
+        match = re.search(pattern, repo_url)
+        if not match:
+            raise ValueError("Invalid GitHub repository URL")
+            
+        owner, repo_name = match.groups()
+        
+        try:
+            repo = self.github.get_repo(f"{owner}/{repo_name}")
+            contributors = list(repo.get_contributors())
+            
+            if self.progress_callback:
+                self.progress_callback(f"Found {len(contributors)} contributors in {owner}/{repo_name}")
+            
+            # Collect usernames of all contributors
+            usernames = [contrib.login for contrib in contributors]
+            
+            # Use parallel_data_collection to get data for all contributors
+            results = []
+            for username in usernames:
+                try:
+                    if self.progress_callback:
+                        self.progress_callback(f"Collecting data for: {username}")
+                    
+                    # Collect data for single user
+                    user_data = self.collect_single_user(username)
+                    if user_data:
+                        results.append(user_data)
+                        
+                except Exception as e:
+                    if self.progress_callback:
+                        self.progress_callback(f"Error collecting data for {username}: {str(e)}")
+                    logging.error(f"Error collecting data for {username}: {e}")
+                    continue
+            
+            return results
+            
+        except GithubException as e:
+            raise ValueError(f"Error accessing repository: {e}")
+    
+    def collect_single_user(self, username: str) -> Dict:
+        """Collect data for a single user."""
+        try:
+            if self.stop_event and self.stop_event.is_set():
+                return None
+            
+            user = self.github.get_user(username)
+            
+            if self.progress_callback:
+                self.progress_callback(f"Collecting extended user data for: {username}")
+            extended_data = self.collect_extended_user_data(username)
+            
+            if self.stop_event and self.stop_event.is_set():
+                return None
+            
+            if self.progress_callback:
+                self.progress_callback(f"Analyzing development patterns for: {username}")
+            development_patterns = self.analyze_development_patterns(username)
+            
+            if self.stop_event and self.stop_event.is_set():
+                return None
+            
+            if self.progress_callback:
+                self.progress_callback(f"Analyzing commit activity for: {username}")
+            commit_activity = self.analyze_commit_activity(username)
+            
+            if self.stop_event and self.stop_event.is_set():
+                return None
+            
+            if self.progress_callback:
+                self.progress_callback(f"Analyzing contribution activity for: {username}")
+            contribution_activity = self.analyze_contribution_activity(username)
+            
+            if self.stop_event and self.stop_event.is_set():
+                return None
+            
+            if self.progress_callback:
+                self.progress_callback(f"Analyzing language distribution for: {username}")
+            language_percentages = self.analyze_language_percentages(username)
+            
+            if self.stop_event and self.stop_event.is_set():
+                return None
+            
+            if self.progress_callback:
+                self.progress_callback(f"Getting top repositories for: {username}")
+            top_repositories = self.get_top_repositories(username)
+            
+            if self.stop_event and self.stop_event.is_set():
+                return None
+            
+            if self.progress_callback:
+                self.progress_callback(f"Analyzing interests for: {username}")
+            interests = self.analyze_interests(username)
+            
+            user_data = {
+                'username': username,
+                'name': user.name,
+                'followers': user.followers,
+                'following': user.following,
+                'public_repos': user.public_repos,
+                'created_at': user.created_at,
+                'extended_user_data': extended_data,
+                'development_patterns': development_patterns,
+                'commit_activity': commit_activity,
+                'contribution_activity': contribution_activity,
+                'language_percentages': language_percentages,
+                'top_repositories': top_repositories,
+                'interests': interests
+            }
+            
+            if self.progress_callback:
+                self.progress_callback(f"Analyzing repositories for: {username}")
+            
+            # Get all repositories and filter out forks
+            all_repos = list(user.get_repos())
+            original_repos = [repo for repo in all_repos if not repo.fork]
+            
+            if not original_repos:
+                logging.info(f"No original repositories found for user: {username}")
+                user_data['repositories'] = []
+                return user_data
+            
+            # Take up to 5 repositories, or all if less than 5
+            repos_to_analyze = original_repos[:min(5, len(original_repos))]
+            logging.info(f"Found {len(repos_to_analyze)} repositories to analyze for user: {username}")
+            
+            repo_details = []
+            for i, repo in enumerate(repos_to_analyze):
+                try:
+                    if self.progress_callback:
+                        self.progress_callback(f"Processing repository {i+1}/{len(repos_to_analyze)}: {repo.name}")
+                    
+                    repo_info = {
+                        'name': repo.name,
+                        'stars': repo.stargazers_count,
+                        'forks': repo.forks_count,
+                        'language': repo.language,
+                        'size': repo.size,
+                        'contributor_network': self.get_contributor_network(username, repo.name),
+                        'issues': self.collect_issue_sentiment_data(username, repo.name),
+                        'extended_repo_data': self.collect_extended_repo_data(username, repo.name)
+                    }
+                    repo_details.append(repo_info)
+                except Exception as e:
+                    logging.error(f"Error processing repository {repo.name} for user {username}: {e}")
+                    continue
+            
+            user_data['repositories'] = repo_details
+            return user_data
+            
+        except GithubException as e:
+            if self.progress_callback:
+                self.progress_callback(f"GitHub error collecting data for {username}: {e}")
+            logging.error(f"GitHub error collecting data for {username}: {e}")
+            return None
+        except Exception as e:
+            if self.progress_callback:
+                self.progress_callback(f"Unexpected error for user {username}: {e}")
+            logging.error(f"Unexpected error for user {username}: {e}")
+            return None
 
 class GitHubMinerGUI:
     def __init__(self, root):
@@ -1228,35 +1746,25 @@ class GitHubMinerGUI:
         self.main_frame = ttk.Frame(root, padding="10")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Token input
-        self.label_token = ttk.Label(self.main_frame, text="GitHub Token:")
-        self.label_token.pack(pady=5)
-        self.entry_token = ttk.Entry(self.main_frame, width=50, show="*")
-        self.entry_token.pack(pady=5)
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(self.main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        # Profile URL input
-        self.label_url = ttk.Label(self.main_frame, text="GitHub Profile URL:")
-        self.label_url.pack(pady=5)
-        self.entry_url = ttk.Entry(self.main_frame, width=50)
-        self.entry_url.pack(pady=5)
+        # Create tabs
+        self.profile_tab = ttk.Frame(self.notebook)
+        self.repo_tab = ttk.Frame(self.notebook)
+        self.auto_tab = ttk.Frame(self.notebook)
         
-        # Buttons frame
-        self.button_frame = ttk.Frame(self.main_frame)
-        self.button_frame.pack(pady=10)
+        self.notebook.add(self.profile_tab, text="Profile Mining")
+        self.notebook.add(self.repo_tab, text="Repository Mining")
+        self.notebook.add(self.auto_tab, text="Auto Discovery")
         
-        self.mine_button = ttk.Button(self.button_frame, text="Mine Data", command=self.start_mining)
-        self.mine_button.pack(side=tk.LEFT, padx=5)
+        # Setup each tab
+        self.setup_profile_tab()
+        self.setup_repo_tab()
+        self.setup_auto_discovery_tab()
         
-        self.stop_button = ttk.Button(self.button_frame, text="Stop Mining", command=self.stop_mining, state='disabled')
-        self.stop_button.pack(side=tk.LEFT, padx=5)
-        
-        self.set_token_button = ttk.Button(self.button_frame, text="Set Global Token", command=self.set_global_token)
-        self.set_token_button.pack(side=tk.LEFT, padx=5)
-        
-        self.convert_button = ttk.Button(self.button_frame, text="Convert JSON to CSV", command=self.convert_json_to_csv)
-        self.convert_button.pack(side=tk.LEFT, padx=5)
-        
-        # Progress frame
+        # Progress frame (shared between tabs)
         self.progress_frame = ttk.Frame(self.main_frame)
         self.progress_frame.pack(fill=tk.X, pady=10)
         
@@ -1266,23 +1774,528 @@ class GitHubMinerGUI:
         self.progress_bar = ttk.Progressbar(self.progress_frame, mode='indeterminate')
         self.progress_bar.pack(fill=tk.X, pady=5)
         
-        # Status text
-        self.status_text = tk.Text(self.main_frame, height=10, width=50)
-        self.status_text.pack(pady=10)
+        # Status text (shared between tabs)
+        self.status_text = tk.Text(self.main_frame, height=10, width=80)
+        self.status_text.pack(pady=10, fill=tk.BOTH, expand=True)
         
+        # Control buttons (shared)
+        self.control_frame = ttk.Frame(self.main_frame)
+        self.control_frame.pack(pady=5)
+        
+        self.stop_button = ttk.Button(self.control_frame, text="Stop Mining", command=self.stop_mining, state='disabled')
+        self.stop_button.pack(side=tk.LEFT, padx=5)
+        
+        self.clear_button = ttk.Button(self.control_frame, text="Clear Log", command=self.clear_log)
+        self.clear_button.pack(side=tk.LEFT, padx=5)
+    
+    def setup_profile_tab(self):
+        # Token input
+        self.label_token = ttk.Label(self.profile_tab, text="GitHub Token:")
+        self.label_token.pack(pady=5)
+        self.entry_token = ttk.Entry(self.profile_tab, width=50, show="*")
+        self.entry_token.pack(pady=5)
+        
+        # Profile URL input
+        self.label_url = ttk.Label(self.profile_tab, text="GitHub Profile URL:")
+        self.label_url.pack(pady=5)
+        self.entry_url = ttk.Entry(self.profile_tab, width=50)
+        self.entry_url.pack(pady=5)
+        
+        # Buttons frame
+        self.button_frame = ttk.Frame(self.profile_tab)
+        self.button_frame.pack(pady=10)
+        
+        self.mine_button = ttk.Button(self.button_frame, text="Mine Profile", command=self.start_profile_mining)
+        self.mine_button.pack(side=tk.LEFT, padx=5)
+        
+        self.set_token_button = ttk.Button(self.button_frame, text="Set Global Token", command=self.set_global_token)
+        self.set_token_button.pack(side=tk.LEFT, padx=5)
+    
+    def setup_repo_tab(self):
+        # Token input
+        self.repo_label_token = ttk.Label(self.repo_tab, text="GitHub Token:")
+        self.repo_label_token.pack(pady=5)
+        self.repo_entry_token = ttk.Entry(self.repo_tab, width=50, show="*")
+        self.repo_entry_token.pack(pady=5)
+        
+        # Repository URL input
+        self.repo_label_url = ttk.Label(self.repo_tab, text="GitHub Repository URL:")
+        self.repo_label_url.pack(pady=5)
+        self.repo_entry_url = ttk.Entry(self.repo_tab, width=50)
+        self.repo_entry_url.pack(pady=5)
+        
+        # Buttons frame
+        self.repo_button_frame = ttk.Frame(self.repo_tab)
+        self.repo_button_frame.pack(pady=10)
+        
+        self.mine_repo_button = ttk.Button(self.repo_button_frame, text="Mine Contributors", command=self.start_repo_mining)
+        self.mine_repo_button.pack(side=tk.LEFT, padx=5)
+        
+        self.set_repo_token_button = ttk.Button(self.repo_button_frame, text="Set Global Token", command=self.set_global_token)
+        self.set_repo_token_button.pack(side=tk.LEFT, padx=5)
+    
+    def setup_auto_discovery_tab(self):
+        # Token input for auto discovery
+        token_frame = ttk.Frame(self.auto_tab)
+        token_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(token_frame, text="GitHub Token:").pack(side=tk.LEFT)
+        self.auto_token_entry = ttk.Entry(token_frame, width=40, show="*")
+        self.auto_token_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Quick Discovery Options
+        quick_frame = ttk.LabelFrame(self.auto_tab, text="Quick Discovery", padding="10")
+        quick_frame.pack(fill=tk.X, pady=5)
+        
+        quick_buttons = ttk.Frame(quick_frame)
+        quick_buttons.pack()
+        
+        ttk.Button(quick_buttons, text="Discover Python Developers", 
+                  command=lambda: self.start_auto_discovery("python_devs")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(quick_buttons, text="Discover JS Developers", 
+                  command=lambda: self.start_auto_discovery("js_devs")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(quick_buttons, text="Discover ML/AI Experts", 
+                  command=lambda: self.start_auto_discovery("ml_experts")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(quick_buttons, text="Discover Trending Developers", 
+                  command=lambda: self.start_auto_discovery("trending")).pack(side=tk.LEFT, padx=5)
+        
+        # Custom Discovery Options
+        custom_frame = ttk.LabelFrame(self.auto_tab, text="Custom Discovery", padding="10")
+        custom_frame.pack(fill=tk.X, pady=5)
+        
+        # Discovery method selection
+        method_frame = ttk.Frame(custom_frame)
+        method_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(method_frame, text="Discovery Method:").pack(side=tk.LEFT)
+        self.discovery_method = ttk.Combobox(method_frame, values=[
+            "Comprehensive (All Methods)",
+            "Trending Repositories", 
+            "Search Criteria",
+            "Popular Topics",
+            "Recently Active",
+            "From Organizations"
+        ], state="readonly", width=25)
+        self.discovery_method.set("Comprehensive (All Methods)")
+        self.discovery_method.pack(side=tk.LEFT, padx=5)
+        
+        # Parameters grid
+        params_frame = ttk.Frame(custom_frame)
+        params_frame.pack(fill=tk.X, pady=5)
+        
+        # Left column
+        left_params = ttk.Frame(params_frame)
+        left_params.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        ttk.Label(left_params, text="Languages (comma-separated):").pack(anchor=tk.W)
+        self.languages_entry = ttk.Entry(left_params, width=30)
+        self.languages_entry.insert(0, "python,javascript,java")
+        self.languages_entry.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(left_params, text="Topics (comma-separated):").pack(anchor=tk.W)
+        self.topics_entry = ttk.Entry(left_params, width=30)
+        self.topics_entry.insert(0, "machine-learning,web-development,mobile")
+        self.topics_entry.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(left_params, text="Location:").pack(anchor=tk.W)
+        self.location_entry = ttk.Entry(left_params, width=30)
+        self.location_entry.pack(fill=tk.X, pady=2)
+        
+        # Right column
+        right_params = ttk.Frame(params_frame)
+        right_params.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(10, 0))
+        
+        ttk.Label(right_params, text="Min Followers:").pack(anchor=tk.W)
+        self.min_followers_entry = ttk.Entry(right_params, width=20)
+        self.min_followers_entry.insert(0, "50")
+        self.min_followers_entry.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(right_params, text="Min Repositories:").pack(anchor=tk.W)
+        self.min_repos_entry = ttk.Entry(right_params, width=20)
+        self.min_repos_entry.insert(0, "5")
+        self.min_repos_entry.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(right_params, text="Max Users to Discover:").pack(anchor=tk.W)
+        self.max_users_entry = ttk.Entry(right_params, width=20)
+        self.max_users_entry.insert(0, "100")
+        self.max_users_entry.pack(fill=tk.X, pady=2)
+        
+        # Organizations input
+        org_frame = ttk.Frame(custom_frame)
+        org_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(org_frame, text="Organizations (for org discovery):").pack(anchor=tk.W)
+        self.orgs_entry = ttk.Entry(org_frame, width=50)
+        self.orgs_entry.insert(0, "google,microsoft,facebook,netflix,uber")
+        self.orgs_entry.pack(fill=tk.X, pady=2)
+        
+        # Custom discovery button
+        ttk.Button(custom_frame, text="Start Custom Discovery", 
+                  command=self.start_custom_discovery).pack(pady=10)
+        
+        # Advanced Options
+        advanced_frame = ttk.LabelFrame(self.auto_tab, text="Advanced Options", padding="10")
+        advanced_frame.pack(fill=tk.X, pady=5)
+        
+        adv_grid = ttk.Frame(advanced_frame)
+        adv_grid.pack()
+        
+        ttk.Label(adv_grid, text="Days back for activity:").grid(row=0, column=0, sticky=tk.W, padx=5)
+        self.days_back_entry = ttk.Entry(adv_grid, width=10)
+        self.days_back_entry.insert(0, "7")
+        self.days_back_entry.grid(row=0, column=1, padx=5)
+        
+        self.include_trending_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(adv_grid, text="Include Trending", variable=self.include_trending_var).grid(row=0, column=2, padx=10)
+        
+        self.include_active_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(adv_grid, text="Include Recently Active", variable=self.include_active_var).grid(row=0, column=3, padx=10)
+    
+    def start_auto_discovery(self, discovery_type):
+        """Start predefined auto discovery."""
+        self.stop_event.clear()
+        self.stop_button.config(state='normal')
+        self.progress_bar.start()
+        self.update_status(f"Starting {discovery_type} auto discovery...")
+        
+        # Start discovery in a separate thread
+        self.mining_thread = threading.Thread(
+            target=self.auto_discovery_worker, 
+            args=(discovery_type,)
+        )
+        self.mining_thread.daemon = True
+        self.mining_thread.start()
+    
+    def start_custom_discovery(self):
+        """Start custom auto discovery based on user parameters."""
+        self.stop_event.clear()
+        self.stop_button.config(state='normal')
+        self.progress_bar.start()
+        self.update_status("Starting custom auto discovery...")
+        
+        # Gather parameters
+        params = self.get_discovery_parameters()
+        
+        # Start discovery in a separate thread
+        self.mining_thread = threading.Thread(
+            target=self.custom_discovery_worker, 
+            args=(params,)
+        )
+        self.mining_thread.daemon = True
+        self.mining_thread.start()
+    
+    def get_discovery_parameters(self):
+        """Get discovery parameters from GUI."""
+        return {
+            'method': self.discovery_method.get(),
+            'languages': [lang.strip() for lang in self.languages_entry.get().split(',') if lang.strip()],
+            'topics': [topic.strip() for topic in self.topics_entry.get().split(',') if topic.strip()],
+            'location': self.location_entry.get().strip(),
+            'min_followers': int(self.min_followers_entry.get() or 0),
+            'min_repos': int(self.min_repos_entry.get() or 0),
+            'max_users': int(self.max_users_entry.get() or 100),
+            'organizations': [org.strip() for org in self.orgs_entry.get().split(',') if org.strip()],
+            'days_back': int(self.days_back_entry.get() or 7),
+            'include_trending': self.include_trending_var.get(),
+            'include_active': self.include_active_var.get()
+        }
+    
+    def auto_discovery_worker(self, discovery_type):
+        """Worker for predefined auto discovery."""
+        try:
+            token = self.auto_token_entry.get() or self.entry_token.get() or GITHUB_TOKEN
+            if not token:
+                raise ValueError("GitHub token is required")
+            
+            discoverer = AutoProfileDiscovery(token)
+            
+            # Predefined discovery strategies
+            strategies = {
+                "python_devs": {
+                    'languages': ['python'],
+                    'topics': ['machine-learning', 'data-science', 'web-development'],
+                    'min_followers': 100,
+                    'include_trending': True,
+                    'include_active': True
+                },
+                "js_devs": {
+                    'languages': ['javascript'],
+                    'topics': ['web-development', 'frontend', 'nodejs'],
+                    'min_followers': 100,
+                    'include_trending': True,
+                    'include_active': True
+                },
+                "ml_experts": {
+                    'languages': ['python', 'r'],
+                    'topics': ['machine-learning', 'artificial-intelligence', 'data-science'],
+                    'min_followers': 200,
+                    'include_trending': True,
+                    'include_active': True
+                },
+                "trending": {
+                    'languages': ['python', 'javascript', 'java', 'go'],
+                    'topics': ['trending'],
+                    'min_followers': 50,
+                    'include_trending': True,
+                    'include_active': True
+                }
+            }
+            
+            if discovery_type in strategies:
+                preferences = strategies[discovery_type]
+                self.update_status(f"Discovering profiles using {discovery_type} strategy...")
+                
+                discovered_users = discoverer.discover_comprehensive(preferences, total_limit=100)
+                
+                if discovered_users and not self.stop_event.is_set():
+                    self.update_status(f"Found {len(discovered_users)} profiles. Starting mining...")
+                    self.mine_discovered_users(discovered_users, f"auto_{discovery_type}")
+                else:
+                    self.update_status("No profiles discovered or operation was stopped.")
+            
+        except Exception as e:
+            if not self.stop_event.is_set():
+                self.update_status(f"Auto discovery error: {str(e)}")
+                messagebox.showerror("Error", f"Auto discovery failed: {e}")
+        finally:
+            self.progress_bar.stop()
+            self.stop_button.config(state='disabled')
+    
+    def custom_discovery_worker(self, params):
+        """Worker for custom auto discovery."""
+        try:
+            token = self.auto_token_entry.get() or self.entry_token.get() or GITHUB_TOKEN
+            if not token:
+                raise ValueError("GitHub token is required")
+            
+            discoverer = AutoProfileDiscovery(token)
+            discovered_users = []
+            
+            method = params['method']
+            
+            if method == "Comprehensive (All Methods)":
+                preferences = {
+                    'languages': params['languages'],
+                    'topics': params['topics'],
+                    'min_followers': params['min_followers'],
+                    'min_repos': params['min_repos'],
+                    'include_trending': params['include_trending'],
+                    'include_active': params['include_active'],
+                    'days_back': params['days_back']
+                }
+                discovered_users = discoverer.discover_comprehensive(preferences, params['max_users'])
+                
+            elif method == "Trending Repositories":
+                for lang in params['languages'][:3]:  # Limit to avoid rate limits
+                    users = discoverer.discover_trending_developers(
+                        language=lang, 
+                        location=params['location'] if params['location'] else None,
+                        limit=params['max_users'] // len(params['languages'])
+                    )
+                    discovered_users.extend(users)
+                    
+            elif method == "Search Criteria":
+                criteria = {
+                    'min_followers': params['min_followers'],
+                    'min_repos': params['min_repos']
+                }
+                if params['location']:
+                    criteria['location'] = params['location']
+                
+                for lang in params['languages'][:3]:
+                    criteria['language'] = lang
+                    users = discoverer.discover_by_search_criteria(criteria, params['max_users'] // len(params['languages']))
+                    discovered_users.extend(users)
+                    
+            elif method == "Popular Topics":
+                discovered_users = discoverer.discover_from_popular_repos(params['topics'], params['max_users'])
+                
+            elif method == "Recently Active":
+                discovered_users = discoverer.discover_active_developers(params['days_back'], params['max_users'])
+                
+            elif method == "From Organizations":
+                discovered_users = discoverer.discover_by_organization(params['organizations'], params['max_users'])
+            
+            # Remove duplicates
+            discovered_users = list(set(discovered_users))[:params['max_users']]
+            
+            if discovered_users and not self.stop_event.is_set():
+                self.update_status(f"Found {len(discovered_users)} profiles. Starting mining...")
+                self.mine_discovered_users(discovered_users, "custom_discovery")
+            else:
+                self.update_status("No profiles discovered or operation was stopped.")
+                
+        except Exception as e:
+            if not self.stop_event.is_set():
+                self.update_status(f"Custom discovery error: {str(e)}")
+                messagebox.showerror("Error", f"Custom discovery failed: {e}")
+        finally:
+            self.progress_bar.stop()
+            self.stop_button.config(state='disabled')
+    
+    def mine_discovered_users(self, usernames, output_prefix):
+        """Mine data for discovered users."""
+        try:
+            token = self.auto_token_entry.get() or self.entry_token.get() or GITHUB_TOKEN
+            
+            def progress_callback(message):
+                self.update_status(message)
+            
+            miner = AdvancedGitHubMiner(token, progress_callback=progress_callback)
+            
+            # Process in smaller batches to avoid rate limits
+            batch_size = 3
+            all_results = []
+            
+            for i in range(0, len(usernames), batch_size):
+                if self.stop_event.is_set():
+                    break
+                    
+                batch = usernames[i:i + batch_size]
+                self.update_status(f"Processing batch {i//batch_size + 1}/{(len(usernames) + batch_size - 1)//batch_size}: {', '.join(batch)}")
+                
+                try:
+                    batch_results = miner.parallel_data_collection(batch, max_workers=2)
+                    all_results.extend(batch_results)
+                    
+                    # Save intermediate results
+                    if batch_results:
+                        miner.export_for_machine_learning(batch_results, "github_data")
+                        self.update_status(f"Batch {i//batch_size + 1} completed and saved")
+                    
+                    # Rate limiting delay
+                    if i + batch_size < len(usernames) and not self.stop_event.is_set():
+                        self.update_status("Waiting 30 seconds to avoid rate limits...")
+                        for _ in range(30):
+                            if self.stop_event.is_set():
+                                break
+                            time.sleep(1)
+                        
+                except Exception as e:
+                    self.update_status(f"Error processing batch {i//batch_size + 1}: {e}")
+                    continue
+            
+            if all_results and not self.stop_event.is_set():
+                self.update_status(f"Auto discovery and mining completed!")
+                self.update_status(f"Total users processed: {len(all_results)}/{len(usernames)}")
+                self.update_status(f"Success rate: {len(all_results)/len(usernames)*100:.1f}%")
+                
+                messagebox.showinfo("Success", 
+                    f"Auto discovery completed!\n"
+                    f"Discovered: {len(usernames)} profiles\n"
+                    f"Successfully mined: {len(all_results)} profiles")
+            elif not self.stop_event.is_set():
+                self.update_status("No data was successfully collected")
+                
+        except Exception as e:
+            if not self.stop_event.is_set():
+                self.update_status(f"Mining error: {str(e)}")
+                messagebox.showerror("Error", f"Mining failed: {e}")
+    
+    def stop_mining(self):
+        """Stop the current mining operation."""
+        self.stop_event.set()
+        self.stop_button.config(state='disabled')
+        self.progress_bar.stop()
+        self.update_status("Mining stopped by user.")
+    
+    def clear_log(self):
+        """Clear the status log."""
+        self.status_text.delete(1.0, tk.END)
+    
     def update_status(self, message):
-        self.status_text.insert(tk.END, message + "\n")
+        """Update the status text with a new message."""
+        self.status_text.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n")
         self.status_text.see(tk.END)
         self.root.update_idletasks()
     
     def set_global_token(self):
         global GITHUB_TOKEN
-        token = self.entry_token.get()
+        token = self.entry_token.get() or self.repo_entry_token.get()
         if not token or token.strip() == "":
             messagebox.showerror("Error", "Token cannot be empty")
             return
         GITHUB_TOKEN = token
         messagebox.showinfo("Success", "Global token has been set!")
+    
+    def start_profile_mining(self):
+        self.mine_button.config(state='disabled')
+        self.progress_bar.start()
+        self.status_text.delete(1.0, tk.END)
+        
+        thread = threading.Thread(target=self.mine_profile)
+        thread.daemon = True
+        thread.start()
+    
+    def start_repo_mining(self):
+        self.mine_repo_button.config(state='disabled')
+        self.progress_bar.start()
+        self.status_text.delete(1.0, tk.END)
+        
+        thread = threading.Thread(target=self.mine_repository)
+        thread.daemon = True
+        thread.start()
+    
+    def mine_profile(self):
+        try:
+            token = self.entry_token.get()
+            profile_url = self.entry_url.get()
+            
+            username = self.extract_username(profile_url)
+            self.update_status(f"Starting mining for user: {username}")
+            
+            miner = AdvancedGitHubMiner(token, progress_callback=self.update_status)
+            self.update_status("Collecting user data...")
+            dataset = miner.parallel_data_collection([username], max_workers=1)
+            
+            if not dataset or dataset[0] is None:
+                raise ValueError(f"No data collected for user: {username}")
+            
+            self.update_status("Exporting data...")
+            miner.export_for_machine_learning(dataset, "github_data")
+            
+            self.update_status("Mining completed successfully!")
+            messagebox.showinfo("Success", f"Data mined and exported for {username}!")
+            
+        except ValueError as e:
+            self.update_status(f"Error: {str(e)}")
+            messagebox.showerror("Error", str(e))
+        except Exception as e:
+            self.update_status(f"Unexpected error: {str(e)}")
+            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
+        finally:
+            self.progress_bar.stop()
+            self.mine_button.config(state='normal')
+    
+    def mine_repository(self):
+        try:
+            token = self.repo_entry_token.get()
+            repo_url = self.repo_entry_url.get()
+            
+            self.update_status(f"Starting mining for repository: {repo_url}")
+            
+            miner = AdvancedGitHubMiner(token, progress_callback=self.update_status)
+            self.update_status("Collecting contributor data...")
+            dataset = miner.mine_repository_contributors(repo_url)
+            
+            if not dataset:
+                raise ValueError("No contributor data collected")
+            
+            self.update_status(f"Found data for {len(dataset)} contributors")
+            self.update_status("Exporting data...")
+            miner.export_for_machine_learning(dataset, "github_data")
+            
+            self.update_status("Mining completed successfully!")
+            messagebox.showinfo("Success", f"Data mined and exported for {len(dataset)} contributors!")
+            
+        except ValueError as e:
+            self.update_status(f"Error: {str(e)}")
+            messagebox.showerror("Error", str(e))
+        except Exception as e:
+            self.update_status(f"Unexpected error: {str(e)}")
+            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
+        finally:
+            self.progress_bar.stop()
+            self.mine_repo_button.config(state='normal')
     
     def extract_username(self, url: str) -> str:
         url = url.strip()
@@ -1293,121 +2306,229 @@ class GitHubMinerGUI:
         if not match:
             raise ValueError("Invalid GitHub profile URL")
         return match.group(1)
-    
-    def start_mining(self):
-        self.stop_event.clear()  # Reset the stop event
-        self.mine_button.config(state='disabled')
-        self.stop_button.config(state='normal')
-        self.progress_bar.start()
-        self.status_text.delete(1.0, tk.END)
-        
-        # Start mining in a separate thread
-        self.mining_thread = threading.Thread(target=self.mining_profile)
-        self.mining_thread.daemon = True
-        self.mining_thread.start()
-    
-    def mining_profile(self):
-        try:
-            token = self.entry_token.get()
-            profile_url = self.entry_url.get()
-            
-            username = self.extract_username(profile_url)
-            self.update_status(f"Starting mining for user: {username}")
-            
-            if self.stop_event.is_set():
-                return
-            
-            miner = AdvancedGitHubMiner(token, progress_callback=self.update_status, stop_event=self.stop_event)
-            self.update_status("Collecting user data...")
-            dataset = miner.parallel_data_collection([username], max_workers=1)
-            
-            if self.stop_event.is_set():
-                self.update_status("Mining was stopped by user.")
-                return
-            
-            if not dataset or dataset[0] is None:
-                raise ValueError(f"No data collected for user: {username}")
-            
-            if self.stop_event.is_set():
-                self.update_status("Mining was stopped by user.")
-                return
-            
-            self.update_status("Exporting data...")
-            timestamp = self.generate_timestamp()
-            miner.export_for_machine_learning(dataset, f"github_data_{username}_{timestamp}")
-            
-            if not self.stop_event.is_set():
-                self.update_status("Mining completed successfully!")
-                messagebox.showinfo("Success", f"Data mined and exported for {username}!")
-            
-        except ValueError as e:
-            if not self.stop_event.is_set():
-                self.update_status(f"Error: {str(e)}")
-                messagebox.showerror("Error", str(e))
-        except Exception as e:
-            if not self.stop_event.is_set():
-                self.update_status(f"Unexpected error: {str(e)}")
-                messagebox.showerror("Error", f"An unexpected error occurred: {e}")
-        finally:
-            self.progress_bar.stop()
-            self.mine_button.config(state='normal')
-            self.stop_button.config(state='disabled')
-
-    def generate_timestamp(self):
-        return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    def stop_mining(self):
-        self.stop_event.set()
-        self.stop_button.config(state='disabled')
-        self.mine_button.config(state='disabled')
-        self.progress_bar.stop()
-        self.update_status("Mining stopped.")
-
-    def convert_json_to_csv(self):
-        """Convert a JSON file to CSV using file dialog."""
-        try:
-            from tkinter import filedialog
-            
-            # Ask user to select JSON file
-            json_file_path = filedialog.askopenfilename(
-                title="Select JSON file to convert",
-                filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
-            )
-            
-            if not json_file_path:
-                return  # User cancelled
-            
-            # Ask user where to save CSV
-            csv_file_path = filedialog.asksaveasfilename(
-                title="Save CSV file as",
-                defaultextension=".csv",
-                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                initialvalue=json_file_path.replace('.json', '_converted.csv')
-            )
-            
-            if not csv_file_path:
-                return  # User cancelled
-            
-            self.update_status(f"Converting {json_file_path} to CSV...")
-            
-            # Create miner instance for conversion
-            token = self.entry_token.get() or GITHUB_TOKEN
-            miner = AdvancedGitHubMiner(token)
-            
-            # Perform conversion
-            result = miner.convert_json_to_csv(json_file_path, csv_file_path)
-            
-            self.update_status(f"Conversion completed: {result}")
-            messagebox.showinfo("Success", f"JSON file converted to CSV successfully!\nSaved as: {result}")
-            
-        except Exception as e:
-            self.update_status(f"Conversion error: {str(e)}")
-            messagebox.showerror("Error", f"Failed to convert JSON to CSV: {e}")
 
 def main():
     root = tk.Tk()
     app = GitHubMinerGUI(root)
     root.mainloop()
+
+def cli_auto_discovery():
+    """Command line interface for automated discovery and mining."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='GitHub Developer Analyzer - Automated Discovery & Mining')
+    parser.add_argument('--token', required=True, help='GitHub API token')
+    parser.add_argument('--mode', choices=['quick', 'custom', 'comprehensive'], required=True, 
+                       help='Discovery mode: quick, custom, or comprehensive')
+    
+    # Quick mode arguments
+    parser.add_argument('--strategy', choices=['python_devs', 'js_devs', 'ml_experts', 'trending'], 
+                       help='Quick strategy (for quick mode)')
+    
+    # Custom mode arguments
+    parser.add_argument('--method', choices=['trending', 'search', 'topics', 'active', 'orgs'], 
+                       help='Discovery method (for custom mode)')
+    parser.add_argument('--languages', help='Comma-separated languages (e.g., python,javascript)')
+    parser.add_argument('--topics', help='Comma-separated topics (e.g., machine-learning,web-development)')
+    parser.add_argument('--location', help='Location filter')
+    parser.add_argument('--min-followers', type=int, default=50, help='Minimum followers')
+    parser.add_argument('--min-repos', type=int, default=5, help='Minimum repositories')
+    parser.add_argument('--organizations', help='Comma-separated organization names')
+    parser.add_argument('--days-back', type=int, default=7, help='Days back for activity search')
+    
+    # General arguments
+    parser.add_argument('--max-users', type=int, default=100, help='Maximum users to discover and mine')
+    parser.add_argument('--output', default='auto_discovery', help='Output file prefix')
+    parser.add_argument('--batch-size', type=int, default=3, help='Batch size for processing')
+    
+    args = parser.parse_args()
+    
+    try:
+        print(f"Starting automated GitHub profile discovery and mining...")
+        print(f"Mode: {args.mode}")
+        print(f"Max users: {args.max_users}")
+        print(f"Output prefix: {args.output}")
+        print("-" * 50)
+        
+        # Initialize discoverer
+        discoverer = AutoProfileDiscovery(args.token)
+        discovered_users = []
+        
+        if args.mode == 'quick':
+            if not args.strategy:
+                print("Error: --strategy is required for quick mode")
+                return
+            
+            strategies = {
+                'python_devs': {
+                    'languages': ['python'],
+                    'topics': ['machine-learning', 'data-science', 'web-development'],
+                    'min_followers': 100,
+                    'include_trending': True,
+                    'include_active': True
+                },
+                'js_devs': {
+                    'languages': ['javascript'],
+                    'topics': ['web-development', 'frontend', 'nodejs'],
+                    'min_followers': 100,
+                    'include_trending': True,
+                    'include_active': True
+                },
+                'ml_experts': {
+                    'languages': ['python', 'r'],
+                    'topics': ['machine-learning', 'artificial-intelligence', 'data-science'],
+                    'min_followers': 200,
+                    'include_trending': True,
+                    'include_active': True
+                },
+                'trending': {
+                    'languages': ['python', 'javascript', 'java', 'go'],
+                    'topics': ['trending'],
+                    'min_followers': 50,
+                    'include_trending': True,
+                    'include_active': True
+                }
+            }
+            
+            preferences = strategies[args.strategy]
+            print(f"Using quick strategy: {args.strategy}")
+            discovered_users = discoverer.discover_comprehensive(preferences, args.max_users)
+            
+        elif args.mode == 'custom':
+            if not args.method:
+                print("Error: --method is required for custom mode")
+                return
+            
+            print(f"Using custom method: {args.method}")
+            
+            if args.method == 'trending':
+                languages = args.languages.split(',') if args.languages else ['python']
+                for lang in languages[:3]:
+                    users = discoverer.discover_trending_developers(
+                        language=lang.strip(), 
+                        location=args.location,
+                        limit=args.max_users // len(languages)
+                    )
+                    discovered_users.extend(users)
+                    
+            elif args.method == 'search':
+                criteria = {
+                    'min_followers': args.min_followers,
+                    'min_repos': args.min_repos
+                }
+                if args.location:
+                    criteria['location'] = args.location
+                
+                languages = args.languages.split(',') if args.languages else ['python']
+                for lang in languages[:3]:
+                    criteria['language'] = lang.strip()
+                    users = discoverer.discover_by_search_criteria(criteria, args.max_users // len(languages))
+                    discovered_users.extend(users)
+                    
+            elif args.method == 'topics':
+                topics = args.topics.split(',') if args.topics else ['machine-learning', 'web-development']
+                discovered_users = discoverer.discover_from_popular_repos([t.strip() for t in topics], args.max_users)
+                
+            elif args.method == 'active':
+                discovered_users = discoverer.discover_active_developers(args.days_back, args.max_users)
+                
+            elif args.method == 'orgs':
+                if not args.organizations:
+                    print("Error: --organizations is required for orgs method")
+                    return
+                orgs = [org.strip() for org in args.organizations.split(',')]
+                discovered_users = discoverer.discover_by_organization(orgs, args.max_users)
+            
+        elif args.mode == 'comprehensive':
+            preferences = {
+                'languages': args.languages.split(',') if args.languages else ['python', 'javascript', 'java'],
+                'topics': args.topics.split(',') if args.topics else ['machine-learning', 'web-development', 'mobile'],
+                'min_followers': args.min_followers,
+                'min_repos': args.min_repos,
+                'include_trending': True,
+                'include_active': True,
+                'days_back': args.days_back
+            }
+            print("Using comprehensive discovery (all methods)")
+            discovered_users = discoverer.discover_comprehensive(preferences, args.max_users)
+        
+        # Remove duplicates
+        discovered_users = list(set(discovered_users))[:args.max_users]
+        
+        if not discovered_users:
+            print("No users discovered. Try different parameters.")
+            return
+        
+        print(f"\nDiscovered {len(discovered_users)} unique users:")
+        for i, user in enumerate(discovered_users[:10], 1):
+            print(f"  {i}. {user}")
+        if len(discovered_users) > 10:
+            print(f"  ... and {len(discovered_users) - 10} more")
+        
+        print(f"\nStarting mining process...")
+        print("-" * 50)
+        
+        # Initialize miner
+        def progress_callback(message):
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+        
+        miner = AdvancedGitHubMiner(args.token, progress_callback=progress_callback)
+        
+        # Process in batches
+        batch_size = args.batch_size
+        all_results = []
+        
+        for i in range(0, len(discovered_users), batch_size):
+            batch = discovered_users[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            total_batches = (len(discovered_users) + batch_size - 1) // batch_size
+            
+            print(f"\nProcessing batch {batch_num}/{total_batches}: {', '.join(batch)}")
+            
+            try:
+                batch_results = miner.parallel_data_collection(batch, max_workers=2)
+                all_results.extend(batch_results)
+                
+                # Save intermediate results
+                if batch_results:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    intermediate_file = f"{args.output}_batch_{batch_num}_{timestamp}"
+                    miner.export_for_machine_learning(batch_results, intermediate_file)
+                    print(f"Batch {batch_num} completed and saved as {intermediate_file}")
+                
+                # Rate limiting delay
+                if i + batch_size < len(discovered_users):
+                    print("Waiting 30 seconds to avoid rate limits...")
+                    time.sleep(30)
+                    
+            except Exception as e:
+                print(f"Error processing batch {batch_num}: {e}")
+                continue
+        
+        # Export final combined results
+        if all_results:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            final_file = f"{args.output}_final_{timestamp}"
+            miner.export_for_machine_learning(all_results, final_file)
+            
+            print(f"\n" + "=" * 50)
+            print(f"AUTOMATED DISCOVERY AND MINING COMPLETED!")
+            print(f"=" * 50)
+            print(f"Users discovered: {len(discovered_users)}")
+            print(f"Users successfully mined: {len(all_results)}")
+            print(f"Success rate: {len(all_results)/len(discovered_users)*100:.1f}%")
+            print(f"Final output files:")
+            print(f"  - CSV: {final_file}_ml_features.csv")
+            print(f"  - JSON: {final_file}_raw.json")
+            print(f"Total features per user: {len(all_results[0].keys()) if all_results else 0}")
+            
+        else:
+            print("No data was successfully collected")
+            
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
 
 def test_json_to_csv_conversion(json_file_path: str):
     """Standalone function to test JSON to CSV conversion."""
@@ -1514,4 +2635,16 @@ def debug_export_function(dataset_file: str = None):
         traceback.print_exc()
 
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    # Check if running in CLI mode (has command line arguments)
+    if len(sys.argv) > 1:
+        # Check if it's the auto-discovery CLI
+        if '--mode' in sys.argv:
+            cli_auto_discovery()
+        else:
+            # Run GUI with any other arguments (backward compatibility)
+            main()
+    else:
+        # Run GUI if no arguments
+        main()
